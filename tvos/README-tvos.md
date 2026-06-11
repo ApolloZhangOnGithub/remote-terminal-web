@@ -15,8 +15,11 @@ Remote Terminal Web 的会话 WebSocket(协议同 ttyd),把 Claude Code 的终�
 1. Xcode 新建 **tvOS App**(SwiftUI 生命周期),把这 4 个文件加进 target:
    `RTWtvOSApp.swift`、`ContentView.swift`、`TerminalWS.swift`(本 README 不用加)。
 2. 加依赖 SwiftTerm:File ▸ Add Packages ▸ `https://github.com/migueldeicaza/SwiftTerm`。
-3. 编译。若 SwiftTerm 的 `TerminalDelegate` 还缺某个方法、或缓冲区读法(`getLine(row:)` /
-   `line[x].getCharacter()`)签名对不上,**按编译器提示补空实现/改名**——核心连接逻辑不动。
+3. 编译。**`TerminalWS.swift` 已用真 SwiftTerm(main 分支)在本机 Swift 6.3 编译验证通过**
+   (`Terminal(delegate:options:)`、`feed(byteArray:[UInt8])`、`getLine`、`getCharacter`、
+   `TerminalDelegate` 方法集都对)。`ContentView` 用标准 SwiftUI + tvOS 键盘 API,Xcode 直接编。
+   (注:`swift build --triple` 在命令行跨编译 tvOS 会报"找不到标准库",那是 SPM CLI 限制,
+   用 Xcode 工程编不受影响。)
 4. 真机:Apple TV 与 Mac 同网,Xcode 选中 Apple TV 设备,Run(免费开发者账号签名 7 天有效,
    付费账号 1 年)。
 5. 给 Apple TV 配一个蓝牙键盘(设置 ▸ 遥控器与设备 ▸ 蓝牙)。

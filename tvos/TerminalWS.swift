@@ -5,7 +5,7 @@ import SwiftTerm
 /// 渲染交给 SwiftUI 读 terminal 的缓冲区(见 ContentView)。连接层是确定可用的;
 /// SwiftTerm 的 delegate/缓冲区 API 在不同版本签名略有差异,编译器报哪个就按提示补/改。
 final class TerminalWS: NSObject, ObservableObject, TerminalDelegate {
-    let terminal: Terminal
+    var terminal: Terminal!          // SwiftTerm 的 Terminal delegate 必填且无 setter,故 init 里建
     @Published var tick = 0          // 每次有新输出 +1,触发 SwiftUI 重绘
     @Published var connected = false
 
@@ -14,9 +14,8 @@ final class TerminalWS: NSObject, ObservableObject, TerminalDelegate {
 
     init(urlString: String, cols: Int = 100, rows: Int = 30) {
         self.urlString = urlString
-        terminal = Terminal(delegate: nil, options: TerminalOptions(cols: cols, rows: rows))
         super.init()
-        terminal.delegate = self
+        terminal = Terminal(delegate: self, options: TerminalOptions(cols: cols, rows: rows))
     }
 
     func connect() {
@@ -52,9 +51,21 @@ final class TerminalWS: NSObject, ObservableObject, TerminalDelegate {
     private func handle(_ bytes: [UInt8]) {
         guard let cmd = bytes.first else { return }
         if cmd == UInt8(ascii: "0") {                 // OUTPUT
-            terminal.feed(byteArray: ArraySlice(bytes.dropFirst()))
+            terminal.feed(byteArray: Array(bytes.dropFirst()))
             DispatchQueue.main.async { self.tick &+= 1 }
         }                                             // '1' 标题 / '2' 偏好:忽略
+    }
+
+    /// 当前屏幕渲染成纯文本(简单 UI 用)。getLine/getCharacter 的用法在此一并被编译验证。
+    func renderScreen() -> String {
+        var s = ""
+        for y in 0..<terminal.rows {
+            if let line = terminal.getLine(row: y) {
+                for x in 0..<terminal.cols { s.append(line[x].getCharacter()) }
+            }
+            s += "\n"
+        }
+        return s
     }
 
     /// 键盘输入 -> 发给终端(0 + data)

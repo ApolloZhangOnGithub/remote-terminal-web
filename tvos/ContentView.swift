@@ -35,7 +35,7 @@ struct TerminalScreen: View {
         ZStack(alignment: .topLeading) {
             Color.black.ignoresSafeArea()
             ScrollView {
-                Text(render())
+                Text(ws.renderScreen())                // 已编译验证的缓冲区渲染
                     .font(.system(size: 24, design: .monospaced))
                     .foregroundColor(.white)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -45,17 +45,6 @@ struct TerminalScreen: View {
             KeyboardCatcher { ws.sendInput($0) }       // 隐形,只负责抓键盘
                 .frame(width: 1, height: 1)
         }
-    }
-    private func render() -> String {
-        let t = ws.terminal
-        var s = ""
-        for y in 0..<t.rows {
-            if let line = t.getLine(row: y) {          // 若 API 名不同,按编译器调整
-                for x in 0..<t.cols { s.append(line[x].getCharacter()) }
-            }
-            s += "\n"
-        }
-        return s
     }
 }
 
