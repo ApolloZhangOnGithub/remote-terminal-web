@@ -201,9 +201,16 @@ class Handler(http.server.BaseHTTPRequestHandler):
             agent_tok = (qq.get("agent_token") or [""])[0]
             if agent_tok:
                 now = int(time.time())
-                at = _load(AGENT_TOKENS, {}).get(agent_tok)
+                ats = _load(AGENT_TOKENS, {})
+                at = ats.get(agent_tok)
                 if at and at.get("device") == mid and at.get("owner") in (owners or []) \
                         and (at.get("expires", 0) == 0 or at["expires"] > now):
+                    # 使用溯源:次数 / 上次时间 / 来源 IP / 会话
+                    at["use_count"] = at.get("use_count", 0) + 1
+                    at["last_used"] = now
+                    at["last_ip"] = self.headers.get("X-Real-IP", "") or self.headers.get("X-Forwarded-For", "")
+                    at["last_session"] = (qq.get("arg") or [""])[0]
+                    _save(AGENT_TOKENS, ats)
                     self.send_response(200)
                     self.send_header("X-Auth-User", at["owner"])
                     self.end_headers()
@@ -384,13 +391,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return self._json(200, {"removed": did})
 
         if path == "/api/agent-token":
-            # 为某设备签发 agent token(bearer);ttl 秒,0=不过期
+            # 签发 agent token;label 备注,ttl 秒(0=不过期)。完整串只返回这一次
             row = valid_user(self)
             if row is None:
                 return self._json(401, {"error": "not_logged_in"})
             dev = (q.get("device") or [""])[0]
             if not owns_machine(row[0], dev):
                 return self._json(403, {"error": "not_your_device"})
+            label = (q.get("label") or [""])[0].strip()[:40]
             try:
                 ttl = int((q.get("ttl") or ["0"])[0] or 0)
             except Exception:
@@ -398,33 +406,48 @@ class Handler(http.server.BaseHTTPRequestHandler):
             now = int(time.time())
             ats = {k: v for k, v in _load(AGENT_TOKENS, {}).items() if v.get("expires", 0) == 0 or v["expires"] > now}
             tok = "agt-" + secrets.token_urlsafe(20)
-            ats[tok] = {"owner": row[0], "device": dev, "expires": (now + ttl) if ttl else 0, "created": now}
+            tid = secrets.token_hex(4)
+            ats[tok] = {"tid": tid, "owner": row[0], "device": dev, "label": label,
+                        "expires": (now + ttl) if ttl else 0, "created": now,
+                        "use_count": 0, "last_used": 0, "last_ip": "", "last_session": ""}
             _save(AGENT_TOKENS, ats)
             ws = "wss://%s/m/%s/ws?arg=<会话id>&agent_token=%s" % (SERVER_HOST, dev, tok)
-            return self._json(200, {"token": tok, "device": dev, "ws_url": ws})
+            return self._json(200, {"token": tok, "tid": tid, "device": dev, "ws_url": ws})
 
         if path == "/api/agent-list":
+            # 列出我的 token + 使用溯源(不含完整串,只给 tid)
             row = valid_user(self)
             if row is None:
                 return self._json(401, {"error": "not_logged_in"})
             now = int(time.time())
             ats = _load(AGENT_TOKENS, {})
-            mine = [{"token": k, "device": v.get("device"), "expires": v.get("expires", 0)}
-                    for k, v in ats.items()
+            mine = [{"tid": v.get("tid", ""), "device": v.get("device"), "label": v.get("label", ""),
+                     "expires": v.get("expires", 0), "created": v.get("created", 0),
+                     "use_count": v.get("use_count", 0), "last_used": v.get("last_used", 0),
+                     "last_ip": v.get("last_ip", ""), "last_session": v.get("last_session", "")}
+                    for v in ats.values()
                     if v.get("owner") == row[0] and (v.get("expires", 0) == 0 or v["expires"] > now)]
+            mine.sort(key=lambda x: x.get("created", 0), reverse=True)
             return self._json(200, {"tokens": mine})
 
         if path == "/api/agent-revoke":
+            # 按 tid 前缀吊销:0 个匹配 404,多个匹配 409,唯一 200
             row = valid_user(self)
             if row is None:
                 return self._json(401, {"error": "not_logged_in"})
-            tok = (q.get("token") or [""])[0]
+            key = (q.get("token") or [""])[0].strip()
+            if not key:
+                return self._json(400, {"error": "empty"})
             ats = _load(AGENT_TOKENS, {})
-            if tok in ats and ats[tok].get("owner") == row[0]:
-                del ats[tok]
-                _save(AGENT_TOKENS, ats)
-                return self._json(200, {"revoked": tok})
-            return self._json(404, {"error": "no_such_token"})
+            matches = [tok for tok, v in ats.items()
+                       if v.get("owner") == row[0] and v.get("tid", "").startswith(key)]
+            if not matches:
+                return self._json(404, {"error": "no_match"})
+            if len(matches) > 1:
+                return self._json(409, {"error": "ambiguous"})
+            del ats[matches[0]]
+            _save(AGENT_TOKENS, ats)
+            return self._json(200, {"revoked": key})
 
         self._send_empty(404)
 
