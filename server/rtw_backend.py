@@ -77,6 +77,10 @@ def user_for_token(token):
 
 def cookie_user(handler):
     c = SimpleCookie(handler.headers.get("Cookie", ""))
+    if STANDALONE:
+        lc = c.get("rtw_login")
+        u = standalone_auth.verify_cookie(lc.value) if lc else None
+        return (u, u) if u else None      # 独立模式:用户名即 GitHub login
     tok = c.get("token")
     return user_for_token(tok.value if tok else None)
 
@@ -93,10 +97,12 @@ def get_rtw_sess(handler):
 
 
 def valid_user(handler):
-    # 受保护接口:博客身份有效 且 平台登录会话未过期(3 天)
     row = cookie_user(handler)
     if not row:
         return None
+    if STANDALONE:
+        return row      # 独立模式:rtw_login 本身就是带签名+3天过期的会话
+    # 复用模式:博客身份有效 且 平台登录会话未过期(3 天)
     sess = get_rtw_sess(handler)
     if not sess or sess.get("user") != row[0]:
         return None
@@ -151,6 +157,28 @@ class Handler(http.server.BaseHTTPRequestHandler):
         u = urlparse(self.path)
         path = u.path
         q = parse_qs(u.query)
+
+        if path == "/api/config":
+            return self._json(200, {"login_url": login_url(), "version": "0.1.0"})
+
+        if STANDALONE and path == "/auth/github":
+            state = secrets.token_urlsafe(12)
+            self.send_response(302)
+            self.send_header("Set-Cookie", "oauth_state=%s; Path=/; Max-Age=600; HttpOnly; SameSite=Lax" % state)
+            self.send_header("Location", standalone_auth.authorize_url(state))
+            self.end_headers()
+            return
+
+        if STANDALONE and path == "/auth/callback":
+            code = (q.get("code") or [""])[0]
+            user = standalone_auth.exchange_code(code) if code else None
+            self.send_response(302)
+            if user:
+                self.send_header("Set-Cookie", "rtw_login=%s; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=%d"
+                                 % (standalone_auth.make_cookie(user), standalone_auth.SESSION_TTL))
+            self.send_header("Location", "/terminal/authok.html")
+            self.end_headers()
+            return
 
         # nginx auth_request
         if path == "/check":

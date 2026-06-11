@@ -16,8 +16,8 @@
 <body>
 <div id="term"></div>
 <script>
-const OAUTH = "https://platform.c-n-b.space/docs/auth/github?redirect=" +
-              encodeURIComponent("https://c-n-b.space/terminal/api/login-start");
+let OAUTH = "https://platform.c-n-b.space/docs/auth/github?redirect=" +
+            encodeURIComponent("https://c-n-b.space/terminal/api/login-start");
 const term = new Terminal({
   cursorBlink:true, fontSize:15,
   fontFamily:'Menlo,Monaco,Consolas,"DejaVu Sans Mono",monospace',
@@ -147,6 +147,8 @@ async function api(path){
 
 async function boot(){
   w("\n"+BANNER+"\n");
+  const cfg = await api("config");
+  if(cfg.ok && cfg.data.login_url) OAUTH = cfg.data.login_url;   // 登录入口由后端配置决定
   const r = await api("me");
   if(r.ok){
     me = r.data;
