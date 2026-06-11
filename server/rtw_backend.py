@@ -144,6 +144,17 @@ def machine_url(mid, sid):
     return "/t/?arg=%s" % sid if mid == "default" else "/m/%s/?arg=%s" % (mid, sid)
 
 
+def touch_session(mid, sid):
+    """每次实际连接终端时更新会话的上次访问时间。"""
+    if not sid:
+        return
+    ss = _load(SESSIONS, {})
+    s = ss.get(mid, {}).get(sid)
+    if s:
+        s["last_access"] = int(time.time())
+        _save(SESSIONS, ss)
+
+
 def sanitize_pubkey(pk):
     """严格校验 SSH 公钥并重建(只保留 类型+base64,丢弃任何注释/换行),防 authorized_keys 注入。"""
     pk = (pk or "").strip()
@@ -229,6 +240,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     at["last_ip"] = self.headers.get("X-Real-IP", "") or self.headers.get("X-Forwarded-For", "")
                     at["last_session"] = (qq.get("arg") or [""])[0]
                     _save(AGENT_TOKENS, ats)
+                    touch_session(mid, at["last_session"])
                     self.send_response(200)
                     self.send_header("X-Auth-User", at["owner"])
                     self.end_headers()
@@ -240,6 +252,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._send_empty(401)
             if owners and row[0] not in owners:
                 return self._send_empty(403)
+            touch_session(mid, (qq.get("arg") or [""])[0])
             self.send_response(200)
             self.send_header("X-Auth-User", row[0])
             self.end_headers()
@@ -479,14 +492,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
             except Exception:
                 req = {}
             tk = req.get("token", "")
-            pubkey = (req.get("pubkey", "") or "").strip()
+            clean_pk = sanitize_pubkey(req.get("pubkey", ""))
             name = str(req.get("name", "机器"))[:40] or "机器"
             now = int(time.time())
             toks = _load(REG_TOKENS, {})
             info = toks.get(tk)
             if not info or info.get("expires", 0) < now:
                 return self._json(403, {"error": "invalid_or_expired_token"})
-            if not pubkey.startswith("ssh-"):
+            if not clean_pk:
                 return self._json(400, {"error": "bad_pubkey"})
             owner = info["owner"]
             del toks[tk]
@@ -500,7 +513,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             machines[did] = {"owners": [owner], "port": port, "name": name, "online": False}
             _save(MACHINES, machines)
             with open(AUTHKEYS, "a") as f:
-                f.write('no-pty,no-agent-forwarding,no-X11-forwarding,permitlisten="127.0.0.1:%d" %s rtw-%s\n' % (port, pubkey, did))
+                f.write('no-pty,no-agent-forwarding,no-X11-forwarding,permitopen="none",permitlisten="127.0.0.1:%d" %s rtw-%s\n' % (port, clean_pk, did))
             with open(PORTS_MAP, "a") as f:
                 f.write("%s %d;\n" % (did, port))
             try:
