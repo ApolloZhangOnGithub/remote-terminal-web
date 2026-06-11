@@ -332,20 +332,21 @@ async function refSession(arg){
   const r = await api("sessions?m="+encodeURIComponent(cwd)); const ss = r.ok?r.data.sessions:[];
   const s = ss[parseInt(arg)-1]; return s && s.id;
 }
+function openTab(win, url){ if(win && !win.closed){ win.location = url; } else { location.href = url; } }
 async function doCs(arg){
+  const win = window.open("", "_blank");   // 同步开窗(仍在按键手势内,手机不拦)
   const id = await refSession(arg);
-  if(!id){ w(" "+C.d+"指定会话序号或 id,运行 "+C.o+"ls"+C.r+C.d+" 查看"+C.r+"\n"); prompt(); return; }
-  await api("open?m="+encodeURIComponent(cwd)+"&s="+encodeURIComponent(id));   // 更新上次访问
-  const url = "/terminal/t.html?m="+encodeURIComponent(cwd)+"&s="+encodeURIComponent(id);
-  window.open(url, "_blank");
-  w(C.c+" 已在新标签页打开会话 "+id+C.r+"\n"); prompt();
+  if(!id){ if(win) win.close(); w(" "+C.d+"指定会话序号或 id,运行 "+C.o+"ls"+C.r+C.d+" 查看"+C.r+"\n"); prompt(); return; }
+  await api("open?m="+encodeURIComponent(cwd)+"&s="+encodeURIComponent(id));
+  openTab(win, "/terminal/t.html?m="+encodeURIComponent(cwd)+"&s="+encodeURIComponent(id));
+  w(C.c+" 已打开会话 "+id+C.r+"\n"); prompt();
 }
 async function doNew(arg){
+  const win = window.open("", "_blank");
   const r = await api("new?m="+encodeURIComponent(cwd)+(arg?"&name="+encodeURIComponent(arg):""));
-  if(!r.ok){ w(" "+C.d+"新建失败"+C.r+"\n"); prompt(); return; }
-  const url = "/terminal/t.html?m="+encodeURIComponent(cwd)+"&s="+encodeURIComponent(r.data.id);
-  window.open(url, "_blank");
-  w(C.c+" 已新建会话 "+r.data.name+" ("+r.data.id+") 并在新标签页打开"+C.r+"\n");
+  if(!r.ok){ if(win) win.close(); w(" "+C.d+"新建失败"+C.r+"\n"); prompt(); return; }
+  openTab(win, "/terminal/t.html?m="+encodeURIComponent(cwd)+"&s="+encodeURIComponent(r.data.id));
+  w(C.c+" 已新建会话 "+r.data.name+" ("+r.data.id+") 并打开"+C.r+"\n");
   await doLs(); prompt();
 }
 
