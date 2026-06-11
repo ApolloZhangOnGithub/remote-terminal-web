@@ -144,6 +144,24 @@ def machine_url(mid, sid):
     return "/t/?arg=%s" % sid if mid == "default" else "/m/%s/?arg=%s" % (mid, sid)
 
 
+def sanitize_pubkey(pk):
+    """严格校验 SSH 公钥并重建(只保留 类型+base64,丢弃任何注释/换行),防 authorized_keys 注入。"""
+    pk = (pk or "").strip()
+    if "\n" in pk or "\r" in pk:
+        return None
+    parts = pk.split()
+    if len(parts) < 2:
+        return None
+    ktype, kdata = parts[0], parts[1]
+    allowed = ("ssh-ed25519", "ssh-rsa",
+               "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521")
+    if ktype not in allowed:
+        return None
+    if not re.match(r'^[A-Za-z0-9+/]{40,1000}={0,3}$', kdata):
+        return None
+    return ktype + " " + kdata
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def _json(self, code, obj):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
