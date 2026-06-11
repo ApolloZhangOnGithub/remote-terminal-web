@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head><meta charset="UTF-8"><title>登录成功</title>
+<style>
+  html,body{margin:0;height:100%;background:#0d1117;color:#7ee787;
+    font-family:"SF Mono",Menlo,Consolas,monospace;
+    display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px}
+  .d{color:#8b949e;font-size:14px}
+</style></head>
+<body>
+  <div>✓ 登录成功</div>
+  <div class="d">正在返回终端,本页可关闭…</div>
+<script>
+  // 弹窗模式:原终端页在轮询登录态,这里直接自我关闭
+  setTimeout(function(){ try{ window.close(); }catch(e){} }, 600);
+  // 兜底(非弹窗/未能关闭):跳回终端主页
+  setTimeout(function(){ location.href = "/terminal/"; }, 1500);
+</script>
+</body>
+</html>

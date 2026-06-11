@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Remote Terminal Web</title>
+<link rel="stylesheet" href="/terminal/xterm.css">
+<script src="/terminal/xterm.js"></script>
+<script src="/terminal/xterm-fit.js"></script>
+<style>
+  html,body{margin:0;height:100%;background:#0d1117}
+  #term{position:absolute;inset:0;padding:14px}
+  .xterm{height:100%}
+</style>
+</head>
+<body>
+<div id="term"></div>
+<script>
+const OAUTH = "https://platform.c-n-b.space/docs/auth/github?redirect=" +
+              encodeURIComponent("https://c-n-b.space/terminal/api/login-start");
+const term = new Terminal({
+  cursorBlink:true, fontSize:15,
+  fontFamily:'Menlo,Monaco,Consolas,"DejaVu Sans Mono",monospace',
+  theme:{ background:'#0d1117', foreground:'#e6edf3', cursor:'#ff8a65' }
+});
+const fit = new FitAddon.FitAddon();
+term.loadAddon(fit);
+term.open(document.getElementById('term'));
+function refit(){ try{ fit.fit(); }catch(e){} }
+refit(); addEventListener('resize', refit);
+
+const C = { o:'\x1b[38;5;209m', g:'\x1b[38;5;114m', c:'\x1b[38;5;75m',
+            y:'\x1b[38;5;179m', d:'\x1b[38;5;245m', b:'\x1b[1m', r:'\x1b[0m' };
+function w(s){ term.write(s.replace(/\n/g,'\r\n')); }
+
+let me = null, cwd = null;
+function pathStr(){ return cwd ? ("~/"+cwd) : "~"; }
+function prompt(){ w("\r\n"+C.c+pathStr()+C.d+" $ "+C.r); }
+
+const VERSION = "v0.1.0";
+const BANNER = C.b+C.o+" Remote Terminal Web "+C.r+C.d+VERSION+C.r+"\n"+
+               C.d+" 在浏览器里进入你自己的机器"+C.r+"\n";
+
+function statusLine(){
+  if(me) w(C.g+" 已登录 "+C.r+C.b+me.name+C.r+C.d+" ("+me.user+")"+C.r+"\n");
+  else   w(C.d+" 未登录,输入 "+C.o+"login"+C.r+C.d+" 用 GitHub 登录"+C.r+"\n");
+}
+
+function fmtDate(ts){ if(!ts) return "未知"; const d=new Date(ts*1000),p=n=>String(n).padStart(2,"0");
+  return p(d.getMonth()+1)+"月"+p(d.getDate())+"日 "+p(d.getHours())+":"+p(d.getMinutes()); }
+function ago(ts){ if(!ts) return "未知"; const s=Math.floor(Date.now()/1000)-ts;
+  if(s<60) return "刚刚"; if(s<3600) return Math.floor(s/60)+"分钟前";
+  if(s<86400) return Math.floor(s/3600)+"小时前"; return Math.floor(s/86400)+"天前"; }
+
+const REGISTRY = [
+  ["agent",   "agent <设备> 签发 AI agent 接入 token,--list 列出,--revoke <token> 吊销"],
+  ["cd",      "cd <设备|序号> 切换设备"],
+  ["clear",   "清屏"],
+  ["device",  "device --remove <设备> 撤销一台设备的远程授权"],
+  ["help",    "看命令,help --about 平台介绍,help --docs 新增设备"],
+  ["ld",      "列出我的设备"],
+  ["login",   "登录,login --switch 切换账号,login --logout 退出"],
+  ["ls",      "列出当前设备的会话"],
+  ["register","生成一键命令,把一台新机器接入"],
+  ["session", "<会话> 进入,--new [名字] 新建,--rename <会话> 名字,--close <会话> 关闭"],
+  ["whoami",  "当前登录用户"],
+];
+function help(topic){
+  if(topic==="about"||topic==="--about"){ topicAbout(); return; }
+  if(topic==="docs"||topic==="--docs"){ topicDocs(); return; }
+  w("\n "+C.b+"命令"+C.r+"\n\n");
+  const items = REGISTRY.slice().sort((a,b)=> a[0]<b[0]?-1:(a[0]>b[0]?1:0));
+  const wmax = items.reduce((m,x)=>Math.max(m,x[0].length),0);
+  items.forEach(([n,desc])=> w("   "+C.o+n.padEnd(wmax)+C.r+"   "+C.d+desc+C.r+"\n"));
+}
+function topicAbout(){
+  w("\n "+C.b+"Remote Terminal Web"+C.r+"\n");
+  w(C.d+" 在浏览器里安全地进入你自己的设备。\n\n"+C.r);
+  w(" 功能\n");
+  w("   纯浏览器,无需装 App,无需 VPN\n");
+  w("   目标设备不开任何入站端口,由设备主动拨出隧道\n");
+  w("   会话常驻,刷新、断网、换设备都不丢\n");
+  w("   终端多开,每个会话独立、有唯一 ID、可重连\n");
+  w("   GitHub 登录,按身份隔离,只能进自己的设备\n");
+  w("   自托管,中转服务器和目标设备都是你自己的,不经第三方\n\n");
+  w(" 数据怎么走\n");
+  w("   1. 你在浏览器里操作网页终端\n");
+  w("   2. 加密(https 和 wss)送到你的中转服务器\n");
+  w("   3. 经反向隧道回到你的设备,命令在设备上真正执行\n");
+}
+function topicDocs(){
+  w("\n "+C.b+"新增一台设备"+C.r+"\n\n");
+  w("   1. 运行 "+C.o+"register"+C.r+" 生成一键接入命令\n");
+  w("   2. 把命令复制到要接入的那台机器上运行(需 ttyd、tmux)\n");
+  w("   3. 回来运行 "+C.o+"ld"+C.r+" 就能看到这台设备\n\n");
+  w(C.d+" 机器若开了代理,记得把中转服务器加成直连,否则注册会失败。\n"+C.r);
+}
+async function doAgent(arg){
+  if(arg.indexOf("--list")===0){
+    const r = await api("agent-list");
+    if(!r.ok){ w(" "+C.d+"获取失败"+C.r+"\n"); return; }
+    const ts = r.data.tokens;
+    if(!ts.length){ w(" "+C.d+"还没有 agent token"+C.r+"\n"); return; }
+    w("\n "+C.d+"agent tokens:"+C.r+"\n");
+    ts.forEach(t=> w("   "+C.b+t.token+C.r+C.d+"  设备 "+t.device+(t.expires?"":"(永久)")+C.r+"\n"));
+    return;
+  }
+  if(arg.indexOf("--revoke")===0){
+    const tok = arg.slice(8).trim();
+    const r = await api("agent-revoke?token="+encodeURIComponent(tok));
+    w((r.ok? C.g+" 已吊销 "+tok : C.d+" 吊销失败")+C.r+"\n"); return;
+  }
+  const id = await refDevice(arg);
+  if(!id){ w(" "+C.d+"用法:agent <设备|序号>,先 "+C.o+"ld"+C.r+C.d+" 看设备"+C.r+"\n"); return; }
+  const r = await api("agent-token?device="+encodeURIComponent(id));
+  if(!r.ok){ w(" "+C.d+"签发失败"+C.r+"\n"); return; }
+  w("\n "+C.d+"AI agent 接入 token(默认不过期,可 "+C.o+"agent --revoke"+C.d+" 吊销):"+C.r+"\n");
+  w("   "+C.b+r.data.token+C.r+"\n\n");
+  w(C.d+" 连接地址(把 <会话id> 换成 session 里看到的具体会话 id):"+C.r+"\n");
+  w("   "+C.c+r.data.ws_url+C.r+"\n\n");
+  w(C.d+" 协议同 ttyd:收到 0+data 为屏幕输出,发送 0+data 为输入,1+JSON 为 resize。"+C.r+"\n");
+}
+async function doDevice(arg){
+  if(arg.indexOf("--remove")===0){ await doDeviceRemove(arg.slice(8).trim()); return; }
+  await doLd();
+}
+async function doDeviceRemove(arg){
+  const id = await refDevice(arg);
+  if(!id){ w(" "+C.d+"指定要撤销的设备序号或 id,运行 "+C.o+"ld"+C.r+C.d+" 查看"+C.r+"\n"); return; }
+  const r = await api("device-remove?id="+encodeURIComponent(id));
+  if(r.ok){ w(" "+C.g+"已撤销设备 "+id+C.r+C.d+",它将无法再连接(隧道密钥和路由已删除)"+C.r+"\n"); if(cwd===id) cwd=null; await doLd(); }
+  else w(" "+C.d+"撤销失败"+C.r+"\n");
+}
+async function doRegister(){
+  const r = await api("register-token");
+  if(!r.ok){ w(" "+C.d+"获取注册命令失败"+C.r+"\n"); return; }
+  w("\n "+C.d+"在要接入的新机器上运行(30 分钟内有效):"+C.r+"\n");
+  w("   "+C.c+r.data.command+C.r+"\n\n");
+  w(C.d+"   运行后回来 "+C.o+"ld"+C.r+C.d+" 就能看到它\n"+C.r);
+}
+
+async function api(path){
+  const res = await fetch("/terminal/api/"+path, {credentials:"same-origin"});
+  if(!res.ok) return {ok:false, status:res.status};
+  return {ok:true, data: await res.json()};
+}
+
+async function boot(){
+  w("\n"+BANNER+"\n");
+  const r = await api("me");
+  if(r.ok){
+    me = r.data;
+    statusLine();
+    w(C.d+" 看设备: "+C.o+"ld"+C.r+C.d+"     看命令: "+C.o+"help"+C.r+C.d+"     平台介绍: "+C.o+"help --about"+C.r+"\n");
+    await doLd();
+  } else {
+    me = null;
+    statusLine();
+    w(C.d+" 登录: "+C.o+"login"+C.r+C.d+"     平台介绍: "+C.o+"help --about"+C.r+"\n");
+  }
+  prompt();
+}
+
+async function run(cmdline){
+  const parts = cmdline.trim().split(/\s+/);
+  const cmd = parts[0], arg = parts.slice(1).join(" ");
+  if(!cmd){ prompt(); return; }
+
+  if(cmd==="clear"){ term.clear(); w(BANNER+"\n"); statusLine(); prompt(); return; }
+  if(cmd==="help"){ help(arg); prompt(); return; }
+  if(cmd==="about"){ topicAbout(); prompt(); return; }
+  if(cmd==="docs"){ topicDocs(); prompt(); return; }
+
+  if(!me){
+    if(cmd==="login"){ gotoLogin(false); return; }
+    w(" "+C.d+"未登录,请先 "+C.o+"login"+C.r+"\n"); prompt(); return;
+  }
+
+  switch(cmd){
+    case "login":
+      if(arg==="--switch"){ gotoLogin(true); return; }
+      if(arg==="--logout"){ doLogout(); return; }
+      w(" "+C.d+"已登录 ("+me.user+"),不能重复 login。切换账号用 "+C.o+"login --switch"+C.d+",退出用 "+C.o+"login --logout"+C.r+"\n"); prompt(); return;
+    case "logout": doLogout(); return;
+    case "whoami": w(" "+me.user+" ("+me.name+")\n"); prompt(); return;
+    case "register": await doRegister(); prompt(); return;
+    case "agent": await doAgent(arg); prompt(); return;
+    case "device": await doDevice(arg); prompt(); return;
+    case "ld": await doLd(); prompt(); return;
+    case "cd": await doCd(arg); prompt(); return;
+    case "ls": await doLs(); prompt(); return;
+    case "session": await doSession(arg); return;
+    default: w(" "+C.d+"没有这个命令: "+cmd+",输入 "+C.o+"help"+C.r+"\n"); prompt();
+  }
+}
+
+let pollTimer=null, pollBusy=false;
+function stopPoll(){ if(pollTimer){ clearTimeout(pollTimer); pollTimer=null; } pollBusy=false; }
+function gotoLogin(sw){
+  stopPoll();                                  // 防止上一次轮询残留
+  if(sw){
+    w(C.c+" 切换账号:已清除本站登录\n"+C.r);
+    w(C.d+" GitHub 会自动用你当前登录的那个账号(GitHub 限制,第三方无法强制选号)。\n"+C.r);
+    w(C.d+" 要换成别的账号,先点这里退出 GitHub,再回来 login:\n"+C.r);
+    w("   "+C.c+"https://github.com/logout"+C.r+"\n");
+    document.cookie="token=; Domain=.c-n-b.space; Path=/; Max-Age=0; Secure; SameSite=Lax"; me=null;
+  }
+  const popup = window.open(OAUTH, "rtw_login", "width=540,height=720");
+  if(!popup){ w(C.d+" 弹窗被拦截,改为本页跳转授权\n"+C.r); location.href=OAUTH; return; }
+  w(C.c+" 已在新窗口打开 GitHub 授权,完成后自动回到这里\n"+C.r);
+  let tries=0, settled=false;
+  const check = async ()=>{
+    if(settled) return;
+    pollBusy=true; tries++;
+    const r = await api("me");
+    pollBusy=false;
+    if(settled) return;                        // 已结束就不再处理(防重复)
+    if(r.ok){
+      settled=true; pollTimer=null;
+      me=r.data; cwd=null;
+      w("\r\n"+C.g+" 登录成功 "+C.r+C.b+me.name+C.r+"\n");
+      statusLine(); await doLd(); prompt();
+      try{ popup.close(); }catch(e){}
+      return;
+    }
+    if(popup.closed || tries>160){
+      settled=true; pollTimer=null;
+      if(!me){ w("\r\n"+C.d+" 未检测到登录(窗口已关或超时),重试 "+C.o+"login"+C.r+"\n"); prompt(); }
+      return;
+    }
+    pollTimer = setTimeout(check, 1500);       // 只在上一次结束后再排下一次
+  };
+  pollTimer = setTimeout(check, 1500);
+}
+function doLogout(){
+  document.cookie="token=; Domain=.c-n-b.space; Path=/; Max-Age=0; Secure; SameSite=Lax";
+  me=null; cwd=null;
+  w(" "+C.g+"已登出"+C.r+C.d+",输入 "+C.o+"login"+C.r+C.d+" 重新登录"+C.r+"\n"); prompt();
+}
+
+async function doLd(){
+  const r = await api("machines");
+  if(!r.ok){ w(" "+C.d+"获取设备失败"+C.r+"\n"); return; }
+  const ms = r.data.machines;
+  if(!ms.length){ w("\n "+C.d+"还没有绑定设备。新增设备运行 "+C.o+"help --docs"+C.r+"\n"); return; }
+  w("\n "+C.d+"我的设备 ("+ms.length+")"+C.r+"\n");
+  const wn = ms.reduce((m,x)=>Math.max(m,x.name.length),0);
+  ms.forEach((m,i)=>{ const st = m.online?C.g+"在线"+C.r:C.d+"离线"+C.r;
+    w("   "+C.y+String(i+1).padStart(2)+"."+C.r+" "+C.b+m.name.padEnd(wn)+C.r+"  "+st+C.d+"  "+m.id+C.r+"\n"); });
+  w(C.d+"   cd <序号|id> 进入设备"+C.r+"\n");
+}
+async function doCd(arg){
+  if(arg===".."||arg===""){ cwd=null; w(" "+C.d+"已回到设备列表"+C.r+"\n"); await doLd(); return; }
+  const id = await refDevice(arg);
+  if(!id){ w(" "+C.d+"没有这台设备,运行 "+C.o+"ld"+C.r+C.d+" 查看"+C.r+"\n"); return; }
+  cwd = id; w(" "+C.d+"切到设备 "+C.b+id+C.r+"\n"); await doLs();
+}
+async function refDevice(arg){
+  if(!/^\d+$/.test(arg)) return arg;
+  const r = await api("machines"); const ms = r.ok?r.data.machines:[];
+  const m = ms[parseInt(arg)-1]; return m && m.id;
+}
+
+async function doSession(arg){
+  if(!cwd){ w(" "+C.d+"先 "+C.o+"cd <设备>"+C.r+C.d+" 选一台设备"+C.r+"\n"); prompt(); return; }
+  if(arg===""){ await doLs(); prompt(); return; }
+  if(arg.indexOf("--new")===0){ await doNew(arg.slice(5).trim()); return; }
+  if(arg.indexOf("--close")===0){ await doClose(arg.slice(7).trim()); prompt(); return; }
+  if(arg.indexOf("--rename")===0){ await doRename(arg.slice(8).trim()); prompt(); return; }
+  await doCs(arg);
+}
+async function doRename(rest){
+  const sp = rest.indexOf(" ");
+  if(sp<0){ w(" "+C.d+"用法:session --rename <会话|序号> 新名字"+C.r+"\n"); return; }
+  const id = await refSession(rest.slice(0,sp).trim()), name = rest.slice(sp+1).trim();
+  if(!id || !name){ w(" "+C.d+"用法:session --rename <会话|序号> 新名字"+C.r+"\n"); return; }
+  const r = await api("rename?m="+encodeURIComponent(cwd)+"&s="+encodeURIComponent(id)+"&name="+encodeURIComponent(name));
+  if(r.ok){ w(" "+C.d+"已重命名为 "+C.b+name+C.r+"\n"); await doLs(); }
+  else w(" "+C.d+"重命名失败"+C.r+"\n");
+}
+async function doClose(arg){
+  const id = await refSession(arg);
+  if(!id){ w(" "+C.d+"指定要关闭的会话序号或 id,运行 "+C.o+"ls"+C.r+C.d+" 查看"+C.r+"\n"); return; }
+  const r = await api("close?m="+encodeURIComponent(cwd)+"&s="+encodeURIComponent(id));
+  if(r.ok){ w(" "+C.d+"已关闭会话 "+id+C.r+"\n"); await doLs(); }
+  else w(" "+C.d+"关闭失败"+C.r+"\n");
+}
+async function doLs(){
+  if(!cwd){ w(" "+C.d+"先 "+C.o+"cd <设备>"+C.r+C.d+" 选一台设备"+C.r+"\n"); return; }
+  const r = await api("sessions?m="+encodeURIComponent(cwd));
+  if(!r.ok){ cwd=null; w(" "+C.d+"该设备已不可用(可能已变更),运行 "+C.o+"ld"+C.r+C.d+" 重新选择设备"+C.r+"\n"); return; }
+  const ss = r.data.sessions;
+  w("\n "+C.d+cwd+" 的会话 ("+ss.length+")"+C.r+"\n");
+  if(!ss.length){ w("   "+C.d+"还没有会话,新建运行 "+C.o+"session --new"+C.r+"\n"); return; }
+  ss.forEach((s,i)=>{
+    w("   "+C.y+String(i+1).padStart(2)+"."+C.r+" "+C.b+s.name+C.r+C.d+"  "+s.id+C.r+"\n");
+    w("        "+C.d+"建于 "+fmtDate(s.created)+",上次访问 "+ago(s.last_access)+C.r+"\n");
+  });
+  w(C.d+"   session <序号|id> 进入,--new 新建,--rename <序号|id> 名字,--close <序号|id> 关闭"+C.r+"\n");
+}
+async function refSession(arg){
+  if(!/^\d+$/.test(arg)) return arg;
+  const r = await api("sessions?m="+encodeURIComponent(cwd)); const ss = r.ok?r.data.sessions:[];
+  const s = ss[parseInt(arg)-1]; return s && s.id;
+}
+async function doCs(arg){
+  const id = await refSession(arg);
+  if(!id){ w(" "+C.d+"指定会话序号或 id,运行 "+C.o+"ls"+C.r+C.d+" 查看"+C.r+"\n"); prompt(); return; }
+  await api("open?m="+encodeURIComponent(cwd)+"&s="+encodeURIComponent(id));   // 更新上次访问
+  const url = "/terminal/t.html?m="+encodeURIComponent(cwd)+"&s="+encodeURIComponent(id);
+  window.open(url, "_blank");
+  w(C.c+" 已在新标签页打开会话 "+id+C.r+"\n"); prompt();
+}
+async function doNew(arg){
+  const r = await api("new?m="+encodeURIComponent(cwd)+(arg?"&name="+encodeURIComponent(arg):""));
+  if(!r.ok){ w(" "+C.d+"新建失败"+C.r+"\n"); prompt(); return; }
+  const url = "/terminal/t.html?m="+encodeURIComponent(cwd)+"&s="+encodeURIComponent(r.data.id);
+  window.open(url, "_blank");
+  w(C.c+" 已新建会话 "+r.data.name+" ("+r.data.id+") 并在新标签页打开"+C.r+"\n");
+  await doLs(); prompt();
+}
+
+let line="", history=[], histIdx=0;
+function setLine(nl){ for(let i=0;i<line.length;i++) term.write("\b \b"); line=nl; term.write(line); }
+term.onData(d=>{
+  if(d==="\x1b[A"){ if(history.length){ if(histIdx>0) histIdx--; setLine(history[histIdx]); } return; }   // 上:上一条
+  if(d==="\x1b[B"){ if(history.length){ if(histIdx<history.length-1){ histIdx++; setLine(history[histIdx]); }
+                                        else { histIdx=history.length; setLine(""); } } return; }            // 下:下一条
+  if(d.charCodeAt(0)===27){ return; }    // 其它转义序列(左右键等)忽略
+  for(const ch of d){
+    if(ch==="\r"){ const l=line; w("\r\n"); if(l.trim()) history.push(l); histIdx=history.length; line=""; run(l); }
+    else if(ch==="\x7f"||ch==="\b"){ if(line.length){ line=line.slice(0,-1); term.write("\b \b"); } }
+    else if(ch==="\x03"){ w("^C"); line=""; histIdx=history.length; prompt(); }
+    else if(ch>=" "){ line+=ch; term.write(ch); }
+  }
+});
+
+boot();
+term.focus();
+addEventListener('click',()=>term.focus());
+</script>
+</body>
+</html>

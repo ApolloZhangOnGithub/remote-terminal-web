@@ -1,0 +1,25 @@
+# 运行时数据(各部署自有,不进仓库)
+machines.json
+sessions.json
+reg_tokens.json
+rtw_sessions.json
+agent_tokens.json
+rtw-ports.map
+*.local
+
+# python
+__pycache__/
+*.pyc
+
+# 系统
+.DS_Store
+
+# 密钥/环境(绝不提交)
+.env
+*.key
+*.pem
+config.local.sh
+
+# 已被 rtw_backend.py 取代的旧后端
+server/authcheck.py
+server/platform_backend.py
