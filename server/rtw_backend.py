@@ -33,6 +33,17 @@ LOCAL_TTYD_PORT = 7681      # 每台机器本地 ttyd 端口(固定)
 LOGIN_TTL = 3 * 86400       # 网页登录会话有效期(3 天,过期需重新 GitHub 登录)
 PORT = 8092
 
+# 鉴权模式:默认复用既有(博客)登录;开源自托管设 RTW_STANDALONE_AUTH=1 用独立 GitHub OAuth
+STANDALONE = os.environ.get("RTW_STANDALONE_AUTH") == "1"
+if STANDALONE:
+    import standalone_auth
+# 前端从 /api/config 取登录入口,与后端鉴权方式解耦
+BLOG_LOGIN_URL = "https://platform.c-n-b.space/docs/auth/github?redirect=https://%s/terminal/api/login-start" % SERVER_HOST
+
+
+def login_url():
+    return "/auth/github" if STANDALONE else BLOG_LOGIN_URL
+
 
 def _load(path, default):
     try:
