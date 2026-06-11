@@ -53,7 +53,7 @@ function ago(ts){ if(!ts) return "未知"; const s=Math.floor(Date.now()/1000)-t
   if(s<86400) return Math.floor(s/3600)+"小时前"; return Math.floor(s/86400)+"天前"; }
 
 const REGISTRY = [
-  ["agent",   "agent <设备> 签发 AI agent 接入 token,--list 列出,--revoke <token> 吊销"],
+  ["agent",   "agent 列出 token 及使用情况,new <设备> [备注] 新建,revoke <id> 吊销"],
   ["cd",      "cd <设备|序号> 切换设备"],
   ["clear",   "清屏"],
   ["device",  "device --remove <设备> 撤销一台设备的远程授权"],
@@ -96,29 +96,56 @@ function topicDocs(){
   w(C.d+" 机器若开了代理,记得把中转服务器加成直连,否则注册会失败。\n"+C.r);
 }
 async function doAgent(arg){
-  if(arg.indexOf("--list")===0){
+  const a = arg.trim();
+  // 默认 / ls / list / --list:管理视图,列出我所有 token 及使用溯源
+  if(a==="" || a==="ls" || a==="list" || a==="--list"){
     const r = await api("agent-list");
     if(!r.ok){ w(" "+C.d+"获取失败"+C.r+"\n"); return; }
     const ts = r.data.tokens;
-    if(!ts.length){ w(" "+C.d+"还没有 agent token"+C.r+"\n"); return; }
-    w("\n "+C.d+"agent tokens:"+C.r+"\n");
-    ts.forEach(t=> w("   "+C.b+t.token+C.r+C.d+"  设备 "+t.device+(t.expires?"":"(永久)")+C.r+"\n"));
+    if(!ts.length){ w("\n "+C.d+"还没有 agent token。新建用 "+C.o+"agent new <设备>"+C.r+"\n"); return; }
+    w("\n "+C.b+"agent tokens"+C.r+C.d+" 共 "+ts.length+" 个"+C.r+"\n\n");
+    ts.forEach(t=>{
+      w("   "+C.o+t.tid+C.r+C.d+"  设备 "+t.device+(t.label?("  "+C.b+t.label+C.r+C.d):"")+(t.expires?"":"  永久")+C.r+"\n");
+      const used = t.use_count
+        ? (ago(t.last_used)+"用过,共 "+t.use_count+" 次"+(t.last_ip?(",来源 "+t.last_ip):"")+(t.last_session?(",会话 "+t.last_session):""))
+        : "从未使用";
+      w("      "+C.d+"建于 "+fmtDate(t.created)+"   "+used+C.r+"\n");
+    });
+    w("\n "+C.d+"新建 "+C.o+"agent new <设备> [备注]"+C.r+C.d+"    吊销 "+C.o+"agent revoke <id>"+C.r+"\n");
     return;
   }
-  if(arg.indexOf("--revoke")===0){
-    const tok = arg.slice(8).trim();
-    const r = await api("agent-revoke?token="+encodeURIComponent(tok));
-    w((r.ok? C.g+" 已吊销 "+tok : C.d+" 吊销失败")+C.r+"\n"); return;
+  // 吊销:agent revoke <id> | agent rm <id> | agent --revoke <id>
+  let m = a.match(/^(?:revoke|rm|--revoke)\s+(\S+)$/);
+  if(m){
+    const key = m[1];
+    const r = await api("agent-revoke?token="+encodeURIComponent(key));
+    if(r.ok) w(" "+C.g+"已吊销 "+key+C.r+"\n");
+    else if(r.status===409) w(" "+C.d+"前缀 "+key+" 匹配到多个 token,请给更长的 id"+C.r+"\n");
+    else w(" "+C.d+"没找到匹配 "+key+" 的 token"+C.r+"\n");
+    return;
   }
-  const id = await refDevice(arg);
-  if(!id){ w(" "+C.d+"用法:agent <设备|序号>,先 "+C.o+"ld"+C.r+C.d+" 看设备"+C.r+"\n"); return; }
-  const r = await api("agent-token?device="+encodeURIComponent(id));
-  if(!r.ok){ w(" "+C.d+"签发失败"+C.r+"\n"); return; }
-  w("\n "+C.d+"AI agent 接入 token(默认不过期,可 "+C.o+"agent --revoke"+C.d+" 吊销):"+C.r+"\n");
-  w("   "+C.b+r.data.token+C.r+"\n\n");
-  w(C.d+" 连接地址(把 <会话id> 换成 session 里看到的具体会话 id):"+C.r+"\n");
-  w("   "+C.c+r.data.ws_url+C.r+"\n\n");
-  w(C.d+" 协议同 ttyd:收到 0+data 为屏幕输出,发送 0+data 为输入,1+JSON 为 resize。"+C.r+"\n");
+  // 新建:agent new <设备> [备注...]
+  m = a.match(/^new\s+(\S+)(?:\s+(.+))?$/);
+  if(m){
+    const dev = m[1], label = (m[2]||"").trim();
+    const id = await refDevice(dev);
+    if(!id){ w(" "+C.d+"没有这个设备,先 "+C.o+"ld"+C.r+C.d+" 看设备"+C.r+"\n"); return; }
+    let path = "agent-token?device="+encodeURIComponent(id);
+    if(label) path += "&label="+encodeURIComponent(label);
+    const r = await api(path);
+    if(!r.ok){ w(" "+C.d+"签发失败"+C.r+"\n"); return; }
+    w("\n "+C.g+"已新建 agent token"+C.r+C.d+",完整串只显示这一次,请保存好"+C.r+"\n");
+    w("   "+C.b+r.data.token+C.r+"\n\n");
+    w(C.d+" 连接地址,把 <会话id> 换成 "+C.o+"ls"+C.d+" 里看到的会话:"+C.r+"\n");
+    w("   "+C.c+r.data.ws_url+C.r+"\n\n");
+    w(C.d+" 协议同 ttyd:0+data 收发屏幕,1+JSON 改尺寸。之后用 "+C.o+"agent"+C.d+" 看使用情况、"+C.o+"agent revoke <id>"+C.d+" 吊销。"+C.r+"\n");
+    return;
+  }
+  // 其它:打印用法(不再像旧版裸 agent <设备> 就签发新 token)
+  w("\n "+C.b+"agent 用法"+C.r+"\n");
+  w("   "+C.o+"agent"+C.r+C.d+"                  列出我的 token 和使用情况"+C.r+"\n");
+  w("   "+C.o+"agent new <设备> [备注]"+C.r+C.d+"   新建一个 token"+C.r+"\n");
+  w("   "+C.o+"agent revoke <id>"+C.r+C.d+"        吊销指定 token,id 见列表"+C.r+"\n");
 }
 async function doDevice(arg){
   if(arg.indexOf("--remove")===0){ await doDeviceRemove(arg.slice(8).trim()); return; }
