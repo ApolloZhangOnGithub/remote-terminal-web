@@ -49,7 +49,18 @@
 ## 自己服务器部署
 前提:一台有公网 IP 的 Linux,nginx,python3,一个 GitHub OAuth App。
 
-1. **GitHub OAuth App**:回调填 `https://<你的域名>/auth/callback`,记下 client id/secret。需要一个能在 `.<域名>` 全域种 token cookie、并能按 cookie 查出用户名的后端(参考 `server/` 里复用博客那套,或自己实现一个最小 OAuth 回调)。
+**鉴权两种模式**(后端 `rtw_backend.py` 自动切换):
+- **独立模式(开源自托管推荐)**:设环境变量 `RTW_STANDALONE_AUTH=1`。用内置的 `server/standalone_auth.py`(GitHub OAuth + HMAC 签名 cookie,**无需任何数据库**)。它提供 `/auth/github` 与 `/auth/callback`,前端登录入口由 `/api/config` 自动指向 `/auth/github`。
+- **复用模式(默认)**:不设该变量时,复用一个外部能在主域种 token cookie、按 cookie 查用户名的后端(作者的部署复用了自己博客的 GitHub 登录)。
+
+1. **GitHub OAuth App**:回调填 `https://<你的域名>/auth/callback`。把 client id/secret 和一个随机密钥放进后端环境变量:
+   ```
+   RTW_STANDALONE_AUTH=1
+   RTW_GITHUB_CLIENT_ID=...      RTW_GITHUB_CLIENT_SECRET=...
+   RTW_SECRET=$(openssl rand -hex 32)
+   RTW_SERVER_HOST=<你的域名>
+   ```
+   nginx 再把 `/auth/` 反代到后端(同 `/terminal/api/`)。
 2. **后端**:`server/rtw_backend.py` 跑成 systemd 服务,监听 `127.0.0.1:8092`,环境变量 `RTW_SERVER_HOST=<你的域名>`。它读 `/opt/<app>/machines.json|sessions.json|reg_tokens.json|rtw_sessions.json`。
 3. **隧道用户**:`useradd -m -s /usr/sbin/nologin rtwtun`;sshd 开 `GatewayPorts clientspecified`。
 4. **nginx**(关键片段):
