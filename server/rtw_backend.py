@@ -229,6 +229,122 @@ def sanitize_pubkey(pk):
     return ktype + " " + kdata
 
 
+def _make_self_contained_init(did, port, server_host, privkey):
+    return '''#!/usr/bin/env bash
+# RTW 自包含初始化脚本(服务端预注册,无需回调)
+set -euo pipefail
+RTW_DIR="$HOME/.rtw"
+RTW_CONF="$RTW_DIR/config"
+say(){ printf "[RTW] %%s\\n" "$1"; }
+die(){ printf "[RTW] 错误: %%s\\n" "$1" >&2; exit 1; }
+OS="$(uname -s)"
+
+# 1) 依赖
+if [ "$OS" = "Darwin" ]; then
+  command -v brew >/dev/null || die "需要 Homebrew(https://brew.sh)"
+  command -v ttyd >/dev/null || { say "安装 ttyd"; brew install ttyd >/dev/null; }
+  command -v tmux >/dev/null || { say "安装 tmux"; brew install tmux >/dev/null; }
+else
+  command -v tmux >/dev/null || { say "安装 tmux"; sudo apt-get update -qq && sudo apt-get install -y tmux >/dev/null; }
+  command -v ttyd >/dev/null || die "请先安装 ttyd"
+fi
+TTYD_BIN="$(command -v ttyd)"; SSH_BIN="$(command -v ssh)"; TMUX_BIN="$(command -v tmux)"
+
+# 2) 写入预生成的密钥和配置
+mkdir -p "$RTW_DIR"
+KEY="$RTW_DIR/tunnel_key"
+cat > "$KEY" << 'KEYEOF'
+%(privkey)s
+KEYEOF
+chmod 600 "$KEY"
+
+cat > "$RTW_CONF" << 'CONFEOF'
+DID="%(did)s"
+TPORT="%(port)d"
+TUSER="rtwtun"
+THOST="%(server)s"
+RTW_SERVER="%(server)s"
+RTW_LOCAL_PORT="7681"
+CONFEOF
+
+DID="%(did)s"; TPORT="%(port)d"; RTW_LOCAL_PORT="7681"
+say "设备已预注册:$DID,端口 $TPORT"
+
+# 3) ttyd 包装
+WRAP="$RTW_DIR/web-term"
+cat > "$WRAP" << 'WEOF'
+#!/bin/bash
+S="${1:-main}"; S="$(printf '%%s' "$S" | tr -cd 'a-zA-Z0-9_-' | cut -c1-32)"; [ -z "$S" ] && S=main
+exec "$TMUX_BIN" new-session -A -s "$S"
+WEOF
+chmod +x "$WRAP"
+
+TUN_OPTS="-N -R 127.0.0.1:$TPORT:localhost:$RTW_LOCAL_PORT -i $KEY -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes -o BatchMode=yes"
+
+# 4) 常驻服务
+if [ "$OS" = "Darwin" ]; then
+  LA="$HOME/Library/LaunchAgents"; mkdir -p "$LA"
+  cat > "$LA/com.rtw.ttyd.plist" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.rtw.ttyd</string>
+  <key>ProgramArguments</key><array>
+    <string>$TTYD_BIN</string><string>-W</string><string>-a</string>
+    <string>-i</string><string>127.0.0.1</string><string>-p</string><string>$RTW_LOCAL_PORT</string>
+    <string>$WRAP</string>
+  </array>
+  <key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardErrorPath</key><string>/tmp/rtw-ttyd.err</string>
+</dict></plist>
+EOF
+  cat > "$LA/com.rtw.tunnel.plist" << EOF
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>com.rtw.tunnel</string>
+  <key>ProgramArguments</key><array>
+    <string>$SSH_BIN</string>$(for o in $TUN_OPTS; do printf '<string>%%s</string>' "$o"; done)<string>rtwtun@%(server)s</string>
+  </array>
+  <key>RunAtLoad</key><true/><key>KeepAlive</key><true/><key>ThrottleInterval</key><integer>10</integer>
+  <key>StandardErrorPath</key><string>/tmp/rtw-tunnel.err</string>
+</dict></plist>
+EOF
+  launchctl unload "$LA/com.rtw.ttyd.plist" 2>/dev/null || true; launchctl load "$LA/com.rtw.ttyd.plist"
+  launchctl unload "$LA/com.rtw.tunnel.plist" 2>/dev/null || true; launchctl load "$LA/com.rtw.tunnel.plist"
+  say "macOS:请把 ttyd 加入 完全磁盘访问:$TTYD_BIN"
+  say "并执行一次 sudo pmset -c sleep 0 关闭插电休眠"
+  open "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles" 2>/dev/null || true
+else
+  SD="$HOME/.config/systemd/user"; mkdir -p "$SD"
+  cat > "$SD/rtw-ttyd.service" << EOF
+[Unit]
+Description=RTW ttyd
+[Service]
+ExecStart=$TTYD_BIN -W -a -i 127.0.0.1 -p $RTW_LOCAL_PORT $WRAP
+Restart=always
+[Install]
+WantedBy=default.target
+EOF
+  cat > "$SD/rtw-tunnel.service" << EOF
+[Unit]
+Description=RTW reverse tunnel
+[Service]
+ExecStart=$SSH_BIN $TUN_OPTS rtwtun@%(server)s
+Restart=always
+RestartSec=10
+[Install]
+WantedBy=default.target
+EOF
+  systemctl --user daemon-reload
+  systemctl --user enable --now rtw-ttyd.service rtw-tunnel.service
+  say "Linux:已用 systemd --user 启动"
+fi
+
+say "完成。回到网页运行 ls 就能看到这台设备(名称:新设备,可用 rn 改名)。"
+''' % {"did": did, "port": port, "server": server_host, "privkey": privkey.strip()}
+
+
 class Handler(http.server.BaseHTTPRequestHandler):
     def _json(self, code, obj):
         body = json.dumps(obj, ensure_ascii=False).encode("utf-8")
@@ -577,24 +693,46 @@ class Handler(http.server.BaseHTTPRequestHandler):
             info = toks.get(tk)
             if not info or info.get("expires", 0) < now or info.get("owner") != row[0]:
                 return self._json(403, {"error": "invalid_or_expired_token"})
-            script_path = os.path.join(os.path.dirname(MACHINES), "init.sh")
+            owner = info["owner"]
+            del toks[tk]
+            _save(REG_TOKENS, toks)
+            # 服务端预注册:生成密钥、分配端口、写 authorized_keys
+            import tempfile
+            td = tempfile.mkdtemp()
+            kp = os.path.join(td, "key")
+            subprocess.run(["ssh-keygen", "-t", "ed25519", "-N", "", "-f", kp, "-C", "rtw-pre"], capture_output=True, timeout=10)
+            with open(kp) as f:
+                privkey = f.read()
+            with open(kp + ".pub") as f:
+                pubkey = f.read().strip()
+            os.unlink(kp); os.unlink(kp + ".pub"); os.rmdir(td)
+            clean_pk = sanitize_pubkey(pubkey)
+            if not clean_pk:
+                return self._json(500, {"error": "keygen_failed"})
+            machines = _load(MACHINES, {})
+            # 查是否已有同 owner 未绑定 pubkey 的设备(不重复建)
+            used = {m.get("port") for m in machines.values() if m.get("port")}
+            port = 7700
+            while port in used:
+                port += 1
+            did = "d-" + secrets.token_hex(4)
+            machines[did] = {"owners": [owner], "port": port, "name": "新设备", "online": False, "pubkey": clean_pk}
+            _save(MACHINES, machines)
+            with open(AUTHKEYS, "a") as f:
+                f.write('no-pty,no-agent-forwarding,no-X11-forwarding,permitlisten="127.0.0.1:%d" %s rtw-%s\n' % (port, clean_pk, did))
+            with open(PORTS_MAP, "a") as f:
+                f.write("%s %d;\n" % (did, port))
             try:
-                with open(script_path) as f:
-                    script = f.read()
+                subprocess.run(["nginx", "-s", "reload"], timeout=10, check=False)
             except Exception:
-                return self._json(500, {"error": "init.sh not found"})
-            patched = script.replace(
-                'RTW_TOKEN="${RTW_TOKEN:-}"',
-                'RTW_TOKEN="${RTW_TOKEN:-%s}"' % tk
-            ).replace(
-                'RTW_SERVER="${RTW_SERVER:-c-n-b.space}"',
-                'RTW_SERVER="${RTW_SERVER:-%s}"' % SERVER_HOST
-            )
+                pass
+            # 生成自包含 init 脚本(不需要回调服务器)
+            script = _make_self_contained_init(did, port, SERVER_HOST, privkey)
             self.send_response(200)
             self.send_header("Content-Type", "application/x-shellscript")
             self.send_header("Content-Disposition", "attachment; filename=rtw-init.sh")
             self.end_headers()
-            self.wfile.write(patched.encode())
+            self.wfile.write(script.encode())
             return
 
         if path == "/api/login-start":
