@@ -31,10 +31,17 @@ HOST = os.environ.get("RTW_SERVER_HOST", "localhost")
 SESSION_TTL = 365 * 86400
 
 
+CALLBACK_HOST = os.environ.get("RTW_CALLBACK_HOST", HOST)
+
+
 def authorize_url(state):
-    cb = "https://%s/auth/callback" % HOST
+    cb = "https://%s/auth/callback" % CALLBACK_HOST
     return ("https://github.com/login/oauth/authorize"
-            "?client_id=%s&redirect_uri=%s&scope=read:user&state=%s" % (CLIENT_ID, cb, state))
+            "?client_id=%s&redirect_uri=%s&scope=read:user&state=rtw_%s" % (CLIENT_ID, cb, state))
+
+
+def is_rtw_state(state):
+    return state.startswith("rtw_") if state else False
 
 
 def exchange_code(code):

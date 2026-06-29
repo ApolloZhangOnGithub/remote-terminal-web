@@ -259,8 +259,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 ua = self.headers.get("User-Agent", "")
                 sess[sid] = {"user": login, "name": display_name, "expires": now + LOGIN_TTL, "login": now, "ua": ua[:120]}
                 _save(RTW_SESSIONS, sess)
-                self.send_header("Set-Cookie", "rtw_sess=%s; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=%d" % (sid, LOGIN_TTL))
-            self.send_header("Location", "/terminal/authok.html")
+                self.send_header("Set-Cookie", "rtw_sess=%s; Path=/; Domain=.c-n-b.space; Secure; HttpOnly; SameSite=Lax; Max-Age=%d" % (sid, LOGIN_TTL))
+            self.send_header("Location", "https://%s/terminal/authok.html" % SERVER_HOST)
             self.end_headers()
             return
 
