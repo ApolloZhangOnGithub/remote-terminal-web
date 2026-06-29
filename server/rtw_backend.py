@@ -374,9 +374,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
             code = (q.get("code") or [""])[0]
             state = (q.get("state") or [""])[0]
             is_rtw = state.startswith("rtw_")
-            result = standalone_auth.exchange_code(code) if (STANDALONE and code) else None
             if not is_rtw:
-                if not result:
+                blog_result = _blog_exchange_code(code) if code else None
+                if not blog_result:
                     self.send_response(302)
                     self.send_header("Location", "https://%s/login" % SERVER_HOST)
                     self.end_headers()
