@@ -236,21 +236,33 @@ async function doRm(arg){
 // ── msg: 设备间消息 ──
 async function doMsg(arg){
   if(!arg){
-    const r = await api("messages");
+    const r = await api("messages?device="+encodeURIComponent(thisDevice||""));
     if(!r.ok){ w(" "+C.d+"获取失败"+C.r+"\n"); return; }
     const ms = r.data.messages;
-    if(!ms.length){ w("\n "+C.d+"没有消息。 msg <文字> 发一条"+C.r+"\n"); return; }
+    if(!ms.length){ w("\n "+C.d+"没有消息"+C.r+"\n"); w(C.d+"   "+C.o+"msg"+C.r+C.d+" <文字> 公开广播   "+C.o+"msg @<序号>"+C.r+C.d+" <文字> 私信某设备"+C.r+"\n"); return; }
     w("\n");
     ms.forEach(m=>{
       const t = fmtDate(m.ts);
-      w(" "+C.d+t+" "+C.r+C.b+m.device+C.r+C.d+":"+C.r+" "+m.text+"\n");
+      const tag = m.public?C.d+" [public]"+C.r:"";
+      const to = m.public?"":C.d+" → "+C.r+C.b+(m.to_name||m.to)+C.r;
+      w(" "+C.d+t+" "+C.r+C.b+m.from+C.r+to+tag+C.d+":"+C.r+" "+m.text+"\n");
     });
     return;
   }
   const dev = thisDevice || "web";
-  const r = await api("msg-send?device="+encodeURIComponent(dev)+"&text="+encodeURIComponent(arg));
-  if(r.ok) w(" "+C.g+"已发送"+C.r+"\n");
-  else w(" "+C.d+"发送失败"+C.r+"\n");
+  const m = arg.match(/^@(\S+)\s+(.+)$/);
+  if(m){
+    const toRef = m[1], text = m[2];
+    const toId = await refDevice(toRef);
+    if(!toId){ w(" "+C.d+"没有这台设备"+C.r+"\n"); return; }
+    const r = await api("msg-send?device="+encodeURIComponent(dev)+"&to="+encodeURIComponent(toId)+"&text="+encodeURIComponent(text));
+    if(r.ok) w(" "+C.g+"已发送私信"+C.r+"\n");
+    else w(" "+C.d+"发送失败"+C.r+"\n");
+  } else {
+    const r = await api("msg-send?device="+encodeURIComponent(dev)+"&text="+encodeURIComponent(arg));
+    if(r.ok) w(" "+C.g+"已广播"+C.r+"\n");
+    else w(" "+C.d+"发送失败"+C.r+"\n");
+  }
 }
 
 // ── agent ──

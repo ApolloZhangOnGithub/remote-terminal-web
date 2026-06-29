@@ -368,9 +368,11 @@ class Handler(http.server.BaseHTTPRequestHandler):
             row = valid_user(self)
             if row is None:
                 return self._json(401, {"error": "not_logged_in"})
+            cur_device = (q.get("device") or [""])[0]
             msgs = _load(MESSAGES, {})
-            mine = msgs.get(row[0], [])[-50:]
-            return self._json(200, {"messages": mine})
+            all_msgs = msgs.get(row[0], [])
+            visible = [m for m in all_msgs if m.get("public") or not m.get("to") or m.get("to") == cur_device or m.get("from_id") == cur_device]
+            return self._json(200, {"messages": visible[-50:]})
 
         if path == "/api/msg-send":
             row = valid_user(self)
@@ -378,15 +380,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._json(401, {"error": "not_logged_in"})
             text = (q.get("text") or [""])[0].strip()[:500]
             device = (q.get("device") or [""])[0][:40]
+            to_device = (q.get("to") or [""])[0][:40]
             if not text:
                 return self._json(400, {"error": "empty"})
             machines = _load(MACHINES, {})
-            dev_name = machines.get(device, {}).get("name", device) if device else "web"
+            from_name = machines.get(device, {}).get("name", device) if device else "web"
+            to_name = machines.get(to_device, {}).get("name", to_device) if to_device else ""
+            msg = {"from": from_name, "from_id": device, "text": text, "ts": int(time.time()), "public": not to_device}
+            if to_device:
+                msg["to"] = to_device
+                msg["to_name"] = to_name
             msgs = _load(MESSAGES, {})
             if row[0] not in msgs:
                 msgs[row[0]] = []
-            msgs[row[0]].append({"device": dev_name, "text": text, "ts": int(time.time())})
-            msgs[row[0]] = msgs[row[0]][-100:]
+            msgs[row[0]].append(msg)
+            msgs[row[0]] = msgs[row[0]][-200:]
             _save(MESSAGES, msgs)
             return self._json(200, {"ok": True})
 
