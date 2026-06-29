@@ -71,8 +71,8 @@ const REGISTRY = [
   ["rm",        "rm <序号> 撤销设备或关闭会话"],
   ["register",  "接入新机器,register --here <序号> 标记当前设备"],
   ["msg",       "msg [文字] 设备间消息(调试用)"],
-  ["login",     "管理登录设备"],
-  ["logout",    "退出"],
+  ["login",     "管理登录设备, login switch 换账号"],
+  ["logout",    "logout 退出当前, logout <序号> 退出指定设备"],
   ["agent",     "管理 agent token(agent new/revoke/ls)"],
   ["whoami",    "当前用户"],
   ["help",      "命令列表"],
@@ -429,10 +429,24 @@ async function run(cmdline){
 
   switch(cmd){
     case "login":
+      if(arg.trim()==="--switch"||arg.trim()==="switch"){ doLogout(); gotoLogin(); return; }
       if(me){ await doLoginManage(arg); }
-      else w(" "+C.d+"未登录"+C.r+"\n");
+      else { gotoLogin(); }
       prompt(); return;
-    case "logout": doLogout(); return;
+    case "logout":
+      if(arg.trim()){
+        // logout <序号> = 退出指定登录设备
+        let sid = arg.trim();
+        if(/^\d+$/.test(sid)){
+          const lr = await api("login-sessions");
+          if(lr.ok){ const s = lr.data.sessions[parseInt(sid)-1]; sid = s ? s.sid : sid; }
+        }
+        const r = await api("login-revoke?sid="+encodeURIComponent(sid));
+        if(r.ok) w(" "+C.g+"已退出"+C.r+"\n");
+        else w(" "+C.d+"没找到"+C.r+"\n");
+        prompt();
+      } else { doLogout(); }
+      return;
     case "whoami": w(" "+me.user+" ("+me.name+")\n"); prompt(); return;
     case "ls": await doLs(); prompt(); return;
     case "cd": await doCd(arg); prompt(); return;
