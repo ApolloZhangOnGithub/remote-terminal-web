@@ -241,8 +241,10 @@ def _blog_exchange_code(code):
         data = json.dumps({"client_id": BLOG_GITHUB_ID, "client_secret": BLOG_GITHUB_SECRET, "code": code}).encode()
         req = urllib.request.Request("https://github.com/login/oauth/access_token", data=data,
             headers={"Accept": "application/json", "Content-Type": "application/json"})
-        access = json.loads(opener.open(req, timeout=10).read()).get("access_token")
+        resp_data = json.loads(opener.open(req, timeout=10).read())
+        access = resp_data.get("access_token")
         if not access:
+            print("[blog-oauth] token exchange failed: %s" % resp_data, flush=True)
             return None
         ureq = urllib.request.Request("https://api.github.com/user",
             headers={"Authorization": "Bearer " + access, "Accept": "application/json"})
@@ -251,7 +253,8 @@ def _blog_exchange_code(code):
         if not login:
             return None
         return {"login": login, "name": info.get("name") or login, "id": info.get("id"), "avatar_url": info.get("avatar_url")}
-    except Exception:
+    except Exception as e:
+        print("[blog-oauth] exception: %s" % e, flush=True)
         return None
 
 
@@ -404,7 +407,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 blog_result = _blog_exchange_code(code) if code else None
                 if not blog_result:
                     self.send_response(302)
-                    self.send_header("Location", "https://%s/login" % SERVER_HOST)
+                    self.send_header("Location", "https://blog.c-n-b.space/login")
                     self.end_headers()
                     return
                 import urllib.request as ur
@@ -425,7 +428,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         self.wfile.write(body)
                 except Exception as e:
                     self.send_response(302)
-                    self.send_header("Location", "https://%s/login" % SERVER_HOST)
+                    self.send_header("Location", "https://blog.c-n-b.space/login")
                     self.end_headers()
                 return
             result = standalone_auth.exchange_code(code) if (STANDALONE and code) else None
