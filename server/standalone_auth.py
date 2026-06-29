@@ -38,7 +38,7 @@ def authorize_url(state):
 
 
 def exchange_code(code):
-    """用 OAuth code 换 GitHub 用户名;失败返回 None。"""
+    """用 OAuth code 换 GitHub 用户信息;返回 (login, display_name) 或 None。"""
     try:
         data = json.dumps({"client_id": CLIENT_ID, "client_secret": CLIENT_SECRET, "code": code}).encode()
         req = urllib.request.Request(
@@ -50,7 +50,10 @@ def exchange_code(code):
         ureq = urllib.request.Request(
             "https://api.github.com/user",
             headers={"Authorization": "Bearer " + access, "Accept": "application/json"})
-        return json.loads(urllib.request.urlopen(ureq, timeout=10).read()).get("login")
+        info = json.loads(urllib.request.urlopen(ureq, timeout=10).read())
+        login = info.get("login")
+        name = info.get("name") or login
+        return (login, name) if login else None
     except Exception:
         return None
 

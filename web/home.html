@@ -315,11 +315,10 @@ async function doLoginManage(arg){
   if(!r.ok){ w(" "+C.d+"获取失败"+C.r+"\n"); return; }
   const ss = r.data.sessions;
   w("\n "+C.b+"登录设备"+C.r+C.d+" 共 "+ss.length+" 个"+C.r+"\n\n");
-  const wn = ss.reduce((m,x)=>Math.max(m,(x.device_name||x.browser).length),0);
   ss.forEach((s,i)=>{
     const cur = s.current?" "+C.g+"← 当前"+C.r:"";
-    const name = s.device_name || s.browser;
-    w("   "+C.y+String(i+1).padStart(2)+"."+C.r+" "+C.b+name.padEnd(wn)+C.r+C.d+"  "+fmtDate(s.login)+" 登录"+C.r+cur+"\n");
+    const dev = s.device_name || "未标记设备";
+    w("   "+C.y+String(i+1).padStart(2)+"."+C.r+" "+C.b+dev+C.r+C.d+"  "+s.browser+"  首次 "+fmtDate(s.registered)+"  上次 "+fmtDate(s.login)+C.r+cur+"\n");
   });
   w("\n "+C.d+"login rm <序号> 踢掉  |  logout 退出当前"+C.r+"\n");
 }

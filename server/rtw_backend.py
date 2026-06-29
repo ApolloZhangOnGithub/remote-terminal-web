@@ -234,14 +234,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
 
         if STANDALONE and path == "/auth/callback":
             code = (q.get("code") or [""])[0]
-            user = standalone_auth.exchange_code(code) if code else None
+            result = standalone_auth.exchange_code(code) if code else None
             self.send_response(302)
-            if user:
+            if result:
+                login, display_name = result
                 now = int(time.time())
                 sid = secrets.token_urlsafe(24)
                 sess = {k: v for k, v in _load(RTW_SESSIONS, {}).items() if v.get("expires", 0) > now}
                 ua = self.headers.get("User-Agent", "")
-                sess[sid] = {"user": user, "name": user, "expires": now + LOGIN_TTL, "login": now, "ua": ua[:120]}
+                sess[sid] = {"user": login, "name": display_name, "expires": now + LOGIN_TTL, "login": now, "ua": ua[:120]}
                 _save(RTW_SESSIONS, sess)
                 self.send_header("Set-Cookie", "rtw_sess=%s; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=%d" % (sid, LOGIN_TTL))
             self.send_header("Location", "/terminal/authok.html")
@@ -325,7 +326,9 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         m = machines.get(fp_to_dev[sfp])
                         if m:
                             device_name = m.get("name", "")
-                    out.append({"sid": sid[:8], "login": s.get("login"),
+                    out.append({"sid": sid[:8],
+                                "login": s.get("last_seen", s.get("login")),
+                                "registered": s.get("login"),
                                 "browser": browser, "device_name": device_name,
                                 "current": sid == cur_sid})
             return self._json(200, {"sessions": out})
@@ -385,14 +388,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     sessions = _load(RTW_SESSIONS, {})
                     s = sessions.get(sc.value)
                     if s:
-                        changed = False
                         if s.get("fp") != fp:
-                            s["fp"] = fp; changed = True
+                            s["fp"] = fp
                         ua = self.headers.get("User-Agent", "")
                         if not s.get("ua") and ua:
-                            s["ua"] = ua[:120]; changed = True
-                        if changed:
-                            _save(RTW_SESSIONS, sessions)
+                            s["ua"] = ua[:120]
+                        s["last_seen"] = int(time.time())
+                        _save(RTW_SESSIONS, sessions)
             result = {"machines": my_machines(row[0])}
             if fp:
                 fps = _load(FINGERPRINTS, {})
