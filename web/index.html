@@ -128,10 +128,7 @@ async function doLsDevices(){
     }
     w("   "+C.c+cmd+C.r+"\n");
   }
-  if(!thisDevice){ w(C.d+"   "+C.o+"register --here <序号>"+C.r+C.d+"  标记你正在用的设备"+C.r+"\n"); }
-  w(C.d+"   "+C.o+"cd"+C.r+C.d+" <序号>          进入设备"+C.r+"\n");
-  w(C.d+"   "+C.o+"rn"+C.r+C.d+" <序号> 新名字   改名"+C.r+"\n");
-  w(C.d+"   "+C.o+"rm"+C.r+C.d+" <序号>          撤销设备"+C.r+"\n");
+  if(!thisDevice){ w(C.d+"   "+C.o+"register --here "+C.c+"<序号>"+C.r+C.d+"  标记你正在用的设备"+C.r+"\n"); }
 }
 
 async function doLsSessions(){
