@@ -44,20 +44,30 @@ def is_rtw_state(state):
     return state.startswith("rtw_") if state else False
 
 
+GITHUB_PROXY = os.environ.get("RTW_GITHUB_PROXY", "")
+
+
+def _opener():
+    if GITHUB_PROXY:
+        return urllib.request.build_opener(urllib.request.ProxyHandler({"https": GITHUB_PROXY, "http": GITHUB_PROXY}))
+    return urllib.request.build_opener()
+
+
 def exchange_code(code):
     """用 OAuth code 换 GitHub 用户信息;返回 (login, display_name) 或 None。"""
     try:
+        opener = _opener()
         data = json.dumps({"client_id": CLIENT_ID, "client_secret": CLIENT_SECRET, "code": code}).encode()
         req = urllib.request.Request(
             "https://github.com/login/oauth/access_token", data=data,
             headers={"Accept": "application/json", "Content-Type": "application/json"})
-        access = json.loads(urllib.request.urlopen(req, timeout=10).read()).get("access_token")
+        access = json.loads(opener.open(req, timeout=10).read()).get("access_token")
         if not access:
             return None
         ureq = urllib.request.Request(
             "https://api.github.com/user",
             headers={"Authorization": "Bearer " + access, "Accept": "application/json"})
-        info = json.loads(urllib.request.urlopen(ureq, timeout=10).read())
+        info = json.loads(opener.open(ureq, timeout=10).read())
         login = info.get("login")
         name = info.get("name") or login
         return (login, name) if login else None

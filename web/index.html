@@ -1,0 +1,469 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='15' fill='%23111'/><text x='12' y='68' font-family='monospace' font-size='55' fill='%2300ff88'>%3E_</text></svg>">
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Remote Terminal Web</title>
+<link rel="stylesheet" href="/terminal/xterm.css">
+<script src="/terminal/xterm.js"></script>
+<script src="/terminal/xterm-fit.js"></script>
+<style>
+  html,body{margin:0;height:100%;background:#0d1117}
+  #term{position:absolute;inset:0;padding:14px}
+  .xterm{height:100%}
+</style>
+</head>
+<body>
+<div id="term"></div>
+<script>
+let OAUTH = "https://platform.c-n-b.space/docs/auth/github?redirect=" +
+            encodeURIComponent("https://c-n-b.space/terminal/api/login-start");
+const term = new Terminal({
+  cursorBlink:true, fontSize:15,
+  fontFamily:'Menlo,Monaco,Consolas,"DejaVu Sans Mono",monospace',
+  theme:{ background:'#0d1117', foreground:'#e6edf3', cursor:'#ff8a65' }
+});
+const fit = new FitAddon.FitAddon();
+term.loadAddon(fit);
+term.open(document.getElementById('term'));
+function refit(){ try{ fit.fit(); }catch(e){} }
+refit(); addEventListener('resize', refit);
+
+const C = { o:'\x1b[38;5;209m', g:'\x1b[38;5;114m', c:'\x1b[38;5;75m',
+            y:'\x1b[38;5;179m', d:'\x1b[38;5;245m', b:'\x1b[1m', r:'\x1b[0m' };
+function w(s){ term.write(s.replace(/\n/g,'\r\n')); }
+
+let me = null, cwd = null, thisDevice = null;
+
+function browserFP(){
+  const s = [screen.width, screen.height, window.devicePixelRatio||1,
+             navigator.platform, navigator.hardwareConcurrency||0,
+             Intl.DateTimeFormat().resolvedOptions().timeZone,
+             screen.colorDepth, navigator.language].join("|");
+  let h = 0;
+  for(let i=0;i<s.length;i++){ h = ((h<<5)-h+s.charCodeAt(i))|0; }
+  return "fp-"+(h>>>0).toString(36);
+}
+function pathStr(){ return cwd ? ("~/"+cwd) : "~"; }
+function prompt(){ w("\r\n"+C.c+pathStr()+C.d+" $ "+C.r); }
+
+const VERSION = "v0.1.1";
+const BANNER = C.b+C.o+" Remote Terminal Web "+C.r+C.d+VERSION+C.r+"\n"+
+               C.d+" 在浏览器里进入你自己的机器"+C.r+"\n";
+
+function statusLine(){
+  if(me) w(C.g+" 已登录 "+C.r+C.b+me.name+C.r+"\n");
+  else   w(C.d+" 未登录,输入 "+C.o+"login"+C.r+C.d+" 用 GitHub 登录"+C.r+"\n");
+}
+
+function fmtDate(ts){ if(!ts) return "未知"; const d=new Date(ts*1000),p=n=>String(n).padStart(2,"0");
+  return p(d.getMonth()+1)+"月"+p(d.getDate())+"日 "+p(d.getHours())+":"+p(d.getMinutes()); }
+function ago(ts){ if(!ts) return "未知"; const s=Math.floor(Date.now()/1000)-ts;
+  if(s<60) return "刚刚"; if(s<3600) return Math.floor(s/60)+"分钟前";
+  if(s<86400) return Math.floor(s/3600)+"小时前"; return Math.floor(s/86400)+"天前"; }
+
+const REGISTRY = [
+  ["ls",        "列出设备(根目录)或会话(设备内)"],
+  ["cd",        "进入设备或会话,cd .. 返回"],
+  ["new",       "新建会话(设备内)"],
+  ["rn",        "rn <序号> <新名字>  重命名设备"],
+  ["rm",        "rm <序号> 撤销设备或关闭会话"],
+  ["register",  "接入新机器,register --here <序号> 标记当前设备"],
+  ["msg",       "msg [文字] 设备间消息(调试用)"],
+  ["login",     "管理登录设备"],
+  ["logout",    "退出"],
+  ["agent",     "管理 agent token(agent new/revoke/ls)"],
+  ["whoami",    "当前用户"],
+  ["help",      "命令列表"],
+  ["clear",     "清屏"],
+];
+function help(){
+  w("\n "+C.b+"命令"+C.r+"\n\n");
+  const items = REGISTRY.slice();
+  const wmax = items.reduce((m,x)=>Math.max(m,x[0].length),0);
+  items.forEach(([n,desc])=> w("   "+C.o+n.padEnd(wmax)+C.r+"   "+C.d+desc+C.r+"\n"));
+}
+
+async function api(path){
+  const res = await fetch("/terminal/api/"+path, {credentials:"same-origin"});
+  if(!res.ok) return {ok:false, status:res.status};
+  return {ok:true, data: await res.json()};
+}
+
+// ── ls: 上下文感知 ──
+async function doLs(){
+  if(cwd) return await doLsSessions();
+  return await doLsDevices();
+}
+
+async function doLsDevices(){
+  const fp = browserFP();
+  const r = await api("machines?fp="+encodeURIComponent(fp));
+  if(!r.ok){ w(" "+C.d+"获取设备失败"+C.r+"\n"); return; }
+  const ms = r.data.machines;
+  if(r.data.this_device) thisDevice = r.data.this_device;
+  if(!ms.length){ w("\n "+C.d+"还没有设备。运行 "+C.o+"register"+C.r+C.d+" 接入一台"+C.r+"\n"); return; }
+  w("\n "+C.d+"我的设备 ("+ms.length+")"+C.r+"\n");
+  const wn = ms.reduce((m,x)=>Math.max(m,x.name.length),0);
+  let thisOffline = false;
+  ms.forEach((m,i)=>{ const st = m.online?C.g+"在线"+C.r:C.d+"离线"+C.r;
+    const here = m.id===thisDevice?" "+C.o+"← 当前设备"+C.r:"";
+    if(m.id===thisDevice && !m.online) thisOffline = true;
+    w("   "+C.y+String(i+1).padStart(2)+"."+C.r+" "+C.b+m.name.padEnd(wn)+C.r+"  "+st+C.d+"  "+m.id+C.r+here+"\n"); });
+  if(thisOffline){
+    const host = location.hostname;
+    const cmd = "curl -fsSL https://"+host+"/terminal/init.sh | bash";
+    const t0 = performance.now();
+    await fetch("/terminal/api/config",{credentials:"same-origin"}).catch(()=>{});
+    const rtt = Math.round(performance.now()-t0);
+    const proxy = rtt > 150;
+    w("\n "+C.o+"⚠ 当前设备离线"+C.r+C.d+" (延迟 "+rtt+"ms"+(proxy?" ⚠ 疑似走了代理":"")+")"+C.r+"\n");
+    if(proxy){
+      w(C.d+"   代理导致隧道断连,先在代理规则里加直连:"+C.r+"\n");
+      w("   "+C.c+"DOMAIN-SUFFIX,"+host+",DIRECT"+C.r+"\n");
+      w(C.d+"   加完后在本机终端跑:"+C.r+"\n");
+    } else {
+      w(C.d+"   在本机终端跑一条命令修复:"+C.r+"\n");
+    }
+    w("   "+C.c+cmd+C.r+"\n");
+  }
+  if(!thisDevice){ w(C.d+"   "+C.o+"register --here <序号>"+C.r+C.d+"  标记你正在用的设备"+C.r+"\n"); }
+  w(C.d+"   "+C.o+"cd"+C.r+C.d+" <序号>          进入设备"+C.r+"\n");
+  w(C.d+"   "+C.o+"rn"+C.r+C.d+" <序号> 新名字   改名"+C.r+"\n");
+  w(C.d+"   "+C.o+"rm"+C.r+C.d+" <序号>          撤销设备"+C.r+"\n");
+}
+
+async function doLsSessions(){
+  const r = await api("sessions?m="+encodeURIComponent(cwd));
+  if(!r.ok){ cwd=null; w(" "+C.d+"设备不可用,已返回"+C.r+"\n"); await doLsDevices(); return; }
+  const ss = r.data.sessions;
+  w("\n "+C.d+cwd+" 的会话 ("+ss.length+")"+C.r+"\n");
+  if(!ss.length){ w("   "+C.d+"还没有会话,运行 "+C.o+"new"+C.r+C.d+" 新建"+C.r+"\n"); return; }
+  ss.forEach((s,i)=>{
+    w("   "+C.y+String(i+1).padStart(2)+"."+C.r+" "+C.b+s.name+C.r+C.d+"  "+s.id+C.r+"\n");
+    w("        "+C.d+"建于 "+fmtDate(s.created)+",上次访问 "+ago(s.last_access)+C.r+"\n");
+  });
+  w(C.d+"   cd <序号>          进入会话\n   new                新建会话\n   rn <序号> <新名字>   重命名\n   rm <序号>           关闭会话\n   cd ..              返回"+C.r+"\n");
+}
+
+// ── cd: 根目录进设备,设备内进会话 ──
+async function doCd(arg){
+  if(arg===".."||arg===""){ if(!cwd){ return; } cwd=null; w(" "+C.d+"已回到设备列表"+C.r+"\n"); await doLsDevices(); return; }
+  if(cwd) return await doCdSession(arg);
+  const id = await refDevice(arg);
+  if(!id){ w(" "+C.d+"没有这台设备,运行 "+C.o+"ls"+C.r+C.d+" 查看"+C.r+"\n"); return; }
+  if(!await isDeviceOnline(id)){ w(" "+C.d+"设备离线,无法进入"+C.r+"\n"); return; }
+  cwd = id; w(" "+C.d+"切到 "+C.b+id+C.r+"\n"); await doLsSessions();
+}
+async function doCdSession(arg){
+  const id = await refSession(arg);
+  if(!id){ w(" "+C.d+"没有这个会话,运行 "+C.o+"ls"+C.r+C.d+" 查看"+C.r+"\n"); return; }
+  if(!await isDeviceOnline(cwd)){ w(" "+C.d+"设备离线"+C.r+"\n"); return; }
+  await api("open?m="+encodeURIComponent(cwd)+"&s="+encodeURIComponent(id));
+  w(C.c+" 进入会话 "+id+" …\n"+C.r);
+  setTimeout(()=>{ location.href = "/terminal/t.html?m="+encodeURIComponent(cwd)+"&s="+encodeURIComponent(id); }, 200);
+}
+
+// ── register: 设备注册 ──
+async function doRegister(arg){
+  if(arg.indexOf("--here")===0) return await doRegisterHere(arg.slice(6).trim());
+  const r = await api("register-token");
+  if(!r.ok){ w(" "+C.d+"获取失败"+C.r+"\n"); return; }
+  const dlUrl = "/terminal/api/init-script?token="+encodeURIComponent(r.data.token);
+  const a = document.createElement("a"); a.href = dlUrl; a.download = "rtw-init.sh"; document.body.appendChild(a); a.click(); a.remove();
+  w("\n "+C.g+"已下载 rtw-init.sh"+C.r+C.d+"(30 分钟内有效),在新机器终端里跑:"+C.r+"\n");
+  w("   "+C.c+"bash ~/Downloads/rtw-init.sh"+C.r+"\n\n");
+  w(C.d+"   完成后运行 "+C.o+"ls"+C.r+C.d+" 刷新设备列表\n"+C.r);
+}
+async function doRegisterHere(arg){
+  if(!arg){ w(" "+C.d+"用法: register --here <设备序号>"+C.r+"\n"); return; }
+  const id = await refDevice(arg);
+  if(!id){ w(" "+C.d+"没有这台设备,运行 "+C.o+"ls"+C.r+C.d+" 查看"+C.r+"\n"); return; }
+  const fp = browserFP();
+  const r = await api("mark-device?m="+encodeURIComponent(id)+"&fp="+encodeURIComponent(fp));
+  if(r.ok){ thisDevice=id; w(" "+C.g+"已标记:当前浏览器在 "+C.b+id+C.r+C.g+"(下次自动识别)"+C.r+"\n"); await doLsDevices(); }
+  else w(" "+C.d+"标记失败"+C.r+"\n");
+}
+// ── new: 新建会话 ──
+async function doNew(arg){
+  if(!cwd){ w(" "+C.d+"先 "+C.o+"cd <设备>"+C.r+C.d+" 进入设备,或用 "+C.o+"register"+C.r+C.d+" 接入新机器"+C.r+"\n"); return; }
+  if(!await isDeviceOnline(cwd)){ w(" "+C.d+"设备离线"+C.r+"\n"); return; }
+  const r = await api("new?m="+encodeURIComponent(cwd)+(arg?"&name="+encodeURIComponent(arg):""));
+  if(!r.ok){ w(" "+C.d+"新建失败"+C.r+"\n"); return; }
+  w(C.c+" 已新建会话 "+r.data.name+" ("+r.data.id+"),进入 …\n"+C.r);
+  setTimeout(()=>{ location.href = "/terminal/t.html?m="+encodeURIComponent(cwd)+"&s="+encodeURIComponent(r.data.id); }, 200);
+}
+
+// ── rn: 上下文感知 ──
+async function doRn(arg){
+  const sp = arg.indexOf(" ");
+  if(sp<0){ w(" "+C.d+"用法: rn <序号> 新名字"+C.r+"\n"); return; }
+  const ref = arg.slice(0,sp).trim(), name = arg.slice(sp+1).trim();
+  if(!name){ w(" "+C.d+"用法: rn <序号> 新名字"+C.r+"\n"); return; }
+  if(cwd){
+    const id = await refSession(ref);
+    if(!id){ w(" "+C.d+"没有这个会话"+C.r+"\n"); return; }
+    const r = await api("rename?m="+encodeURIComponent(cwd)+"&s="+encodeURIComponent(id)+"&name="+encodeURIComponent(name));
+    if(r.ok){ w(" "+C.g+"已重命名为 "+C.b+name+C.r+"\n"); await doLsSessions(); }
+    else w(" "+C.d+"重命名失败"+C.r+"\n");
+  } else {
+    const id = await refDevice(ref);
+    if(!id){ w(" "+C.d+"没有这台设备"+C.r+"\n"); return; }
+    const r = await api("device-rename?m="+encodeURIComponent(id)+"&name="+encodeURIComponent(name));
+    if(r.ok){ w(" "+C.g+"已重命名为 "+C.b+name+C.r+"\n"); await doLsDevices(); }
+    else w(" "+C.d+"重命名失败"+C.r+"\n");
+  }
+}
+
+// ── rm: 上下文感知 ──
+async function doRm(arg){
+  if(!arg){ w(" "+C.d+"用法: rm <序号>"+C.r+"\n"); return; }
+  if(cwd){
+    const id = await refSession(arg);
+    if(!id){ w(" "+C.d+"没有这个会话"+C.r+"\n"); return; }
+    const r = await api("close?m="+encodeURIComponent(cwd)+"&s="+encodeURIComponent(id));
+    if(r.ok){ w(" "+C.d+"已关闭会话 "+id+C.r+"\n"); await doLsSessions(); }
+    else w(" "+C.d+"关闭失败"+C.r+"\n");
+  } else {
+    const id = await refDevice(arg);
+    if(!id){ w(" "+C.d+"没有这台设备"+C.r+"\n"); return; }
+    const r = await api("device-remove?id="+encodeURIComponent(id));
+    if(r.ok){ w(" "+C.g+"已撤销设备 "+id+C.r+"\n"); if(cwd===id) cwd=null; await doLsDevices(); }
+    else w(" "+C.d+"撤销失败"+C.r+"\n");
+  }
+}
+
+// ── msg: 设备间消息 ──
+async function doMsg(arg){
+  if(!arg){
+    const r = await api("messages?device="+encodeURIComponent(thisDevice||""));
+    if(!r.ok){ w(" "+C.d+"获取失败"+C.r+"\n"); return; }
+    const ms = r.data.messages;
+    if(!ms.length){ w("\n "+C.d+"没有消息"+C.r+"\n"); w(C.d+"   "+C.o+"msg"+C.r+C.d+" <文字> 公开广播   "+C.o+"msg @<序号>"+C.r+C.d+" <文字> 私信某设备"+C.r+"\n"); return; }
+    w("\n");
+    ms.forEach(m=>{
+      const t = fmtDate(m.ts);
+      const tag = m.public?C.d+" [public]"+C.r:"";
+      const to = m.public?"":C.d+" → "+C.r+C.b+(m.to_name||m.to)+C.r;
+      w(" "+C.d+t+" "+C.r+C.b+m.from+C.r+to+tag+C.d+":"+C.r+" "+m.text+"\n");
+    });
+    return;
+  }
+  const dev = thisDevice || "web";
+  const m = arg.match(/^@(\S+)\s+(.+)$/);
+  if(m){
+    const toRef = m[1], text = m[2];
+    const toId = await refDevice(toRef);
+    if(!toId){ w(" "+C.d+"没有这台设备"+C.r+"\n"); return; }
+    const r = await api("msg-send?device="+encodeURIComponent(dev)+"&to="+encodeURIComponent(toId)+"&text="+encodeURIComponent(text));
+    if(r.ok) w(" "+C.g+"已发送私信"+C.r+"\n");
+    else w(" "+C.d+"发送失败"+C.r+"\n");
+  } else {
+    const r = await api("msg-send?device="+encodeURIComponent(dev)+"&text="+encodeURIComponent(arg));
+    if(r.ok) w(" "+C.g+"已广播"+C.r+"\n");
+    else w(" "+C.d+"发送失败"+C.r+"\n");
+  }
+}
+
+// ── agent ──
+async function doAgent(arg){
+  const a = arg.trim();
+  if(a==="" || a==="ls" || a==="list"){
+    const r = await api("agent-list");
+    if(!r.ok){ w(" "+C.d+"获取失败"+C.r+"\n"); return; }
+    const ts = r.data.tokens;
+    if(!ts.length){ w("\n "+C.d+"还没有 agent token。新建用 "+C.o+"agent new <设备>"+C.r+"\n"); return; }
+    w("\n "+C.b+"agent tokens"+C.r+C.d+" 共 "+ts.length+" 个"+C.r+"\n\n");
+    ts.forEach(t=>{
+      w("   "+C.o+t.tid+C.r+C.d+"  设备 "+t.device+(t.label?("  "+C.b+t.label+C.r+C.d):"")+(t.expires?"":"  永久")+C.r+"\n");
+      const used = t.use_count
+        ? (ago(t.last_used)+"用过,共 "+t.use_count+" 次"+(t.last_ip?(",来源 "+t.last_ip):"")+(t.last_session?(",会话 "+t.last_session):""))
+        : "从未使用";
+      w("      "+C.d+"建于 "+fmtDate(t.created)+"   "+used+C.r+"\n");
+    });
+    w("\n "+C.d+"agent new <设备> [备注]  |  agent revoke <id>"+C.r+"\n");
+    return;
+  }
+  let m = a.match(/^(?:revoke|rm)\s+(\S+)$/);
+  if(m){
+    const key = m[1];
+    const r = await api("agent-revoke?token="+encodeURIComponent(key));
+    if(r.ok) w(" "+C.g+"已吊销 "+key+C.r+"\n");
+    else if(r.status===409) w(" "+C.d+"前缀 "+key+" 匹配多个,给更长的 id"+C.r+"\n");
+    else w(" "+C.d+"没找到 "+key+C.r+"\n");
+    return;
+  }
+  m = a.match(/^new\s+(\S+)(?:\s+(.+))?$/);
+  if(m){
+    const dev = m[1], label = (m[2]||"").trim();
+    const id = await refDevice(dev);
+    if(!id){ w(" "+C.d+"没有这个设备"+C.r+"\n"); return; }
+    let path = "agent-token?device="+encodeURIComponent(id);
+    if(label) path += "&label="+encodeURIComponent(label);
+    const r = await api(path);
+    if(!r.ok){ w(" "+C.d+"签发失败"+C.r+"\n"); return; }
+    w("\n "+C.g+"已新建 agent token"+C.r+C.d+",只显示一次:"+C.r+"\n");
+    w("   "+C.b+r.data.token+C.r+"\n\n");
+    w(C.d+" ws: "+C.c+r.data.ws_url+C.r+"\n");
+    return;
+  }
+  w(" "+C.d+"用法: agent [ls|new <设备> [备注]|revoke <id>]"+C.r+"\n");
+}
+
+// ── login 管理 ──
+async function doLoginManage(arg){
+  const a = arg.trim();
+  const m = a.match(/^rm\s+(\S+)$/);
+  if(m){
+    let sid = m[1];
+    if(/^\d+$/.test(sid)){
+      const lr = await api("login-sessions");
+      if(lr.ok){ const s = lr.data.sessions[parseInt(sid)-1]; sid = s ? s.sid : sid; }
+    }
+    const r = await api("login-revoke?sid="+encodeURIComponent(sid));
+    if(r.ok) w(" "+C.g+"已退出"+C.r+"\n");
+    else w(" "+C.d+"没找到"+C.r+"\n");
+    return;
+  }
+  const r = await api("login-sessions");
+  if(!r.ok){ w(" "+C.d+"获取失败"+C.r+"\n"); return; }
+  const ss = r.data.sessions;
+  w("\n "+C.b+"登录设备"+C.r+C.d+" 共 "+ss.length+" 个"+C.r+"\n\n");
+  ss.forEach((s,i)=>{
+    const cur = s.current?" "+C.g+"← 当前"+C.r:"";
+    const dev = s.device_name || "未标记设备";
+    w("   "+C.y+String(i+1).padStart(2)+"."+C.r+" "+C.b+dev+C.r+C.d+"  "+s.browser+"  首次 "+fmtDate(s.registered)+"  上次 "+fmtDate(s.login)+C.r+cur+"\n");
+  });
+  w("\n "+C.d+"logout <序号> 退出设备  |  logout 退出当前"+C.r+"\n");
+}
+
+// ── 辅助 ──
+async function refDevice(arg){
+  if(!/^\d+$/.test(arg)) return arg;
+  const r = await api("machines"); const ms = r.ok?r.data.machines:[];
+  const m = ms[parseInt(arg)-1]; return m && m.id;
+}
+async function refSession(arg){
+  if(!/^\d+$/.test(arg)) return arg;
+  const r = await api("sessions?m="+encodeURIComponent(cwd)); const ss = r.ok?r.data.sessions:[];
+  const s = ss[parseInt(arg)-1]; return s && s.id;
+}
+async function isDeviceOnline(mid){
+  const r = await api("machines"); if(!r.ok) return false;
+  const m = r.data.machines.find(x=>x.id===mid); return m && m.online;
+}
+
+// ── 登录 ──
+let pollTimer=null, pollBusy=false;
+function stopPoll(){ if(pollTimer){ clearTimeout(pollTimer); pollTimer=null; } pollBusy=false; }
+function gotoLogin(){
+  stopPoll();
+  const popup = window.open(OAUTH, "rtw_login", "width=540,height=720");
+  if(!popup){ w(C.d+" 弹窗被拦截,改为跳转"+C.r); location.href=OAUTH; return; }
+  w(C.c+" 已打开 GitHub 授权窗口\n"+C.r);
+  let tries=0, settled=false;
+  const check = async ()=>{
+    if(settled) return;
+    pollBusy=true; tries++;
+    const r = await api("me");
+    pollBusy=false;
+    if(settled) return;
+    if(r.ok){
+      settled=true; pollTimer=null;
+      me=r.data; cwd=null;
+      w("\r\n"+C.g+" 登录成功"+C.r+"\n");
+      statusLine(); await doLsDevices(); prompt();
+      try{ popup.close(); }catch(e){}
+      return;
+    }
+    if(popup.closed || tries>160){
+      settled=true; pollTimer=null;
+      if(!me){ w("\r\n"+C.d+" 登录超时,重试 "+C.o+"login"+C.r+"\n"); prompt(); }
+      return;
+    }
+    pollTimer = setTimeout(check, 1500);
+  };
+  pollTimer = setTimeout(check, 1500);
+}
+function doLogout(){
+  document.cookie="rtw_sess=; Path=/; Max-Age=0; Secure; SameSite=Lax";
+  document.cookie="token=; Domain=.c-n-b.space; Path=/; Max-Age=0; Secure; SameSite=Lax";
+  me=null; cwd=null;
+  w(" "+C.g+"已退出"+C.r+"\n"); prompt();
+}
+
+// ── boot & clear ──
+async function boot(){
+  w("\n"+BANNER+"\n");
+  const cfg = await api("config");
+  if(cfg.ok && cfg.data.login_url) OAUTH = cfg.data.login_url;
+  const r = await api("me");
+  if(r.ok){
+    me = r.data;
+    statusLine();
+    w(C.d+" "+C.o+"register"+C.r+C.d+" 接入新机器   "+C.o+"msg"+C.r+C.d+" 消息   "+C.o+"login"+C.r+C.d+" 管理登录   "+C.o+"help"+C.r+C.d+" 更多"+C.r+"\n");
+    await doLsDevices();
+  } else {
+    me = null;
+    statusLine();
+  }
+  prompt();
+}
+
+// ── 命令路由 ──
+async function run(cmdline){
+  const parts = cmdline.trim().split(/\s+/);
+  const cmd = parts[0], arg = parts.slice(1).join(" ");
+  if(!cmd){ prompt(); return; }
+
+  if(cmd==="clear"){ term.clear(); w(BANNER+"\n"); statusLine();
+    if(me){ w(C.d+" "+C.o+"register"+C.r+C.d+" 接入新机器   "+C.o+"msg"+C.r+C.d+" 消息   "+C.o+"login"+C.r+C.d+" 管理登录   "+C.o+"help"+C.r+C.d+" 更多"+C.r+"\n"); await doLsDevices(); }
+    prompt(); return; }
+  if(cmd==="help"){ help(); prompt(); return; }
+
+  if(!me){
+    if(cmd==="login"){ gotoLogin(); return; }
+    w(" "+C.d+"未登录,请先 "+C.o+"login"+C.r+"\n"); prompt(); return;
+  }
+
+  switch(cmd){
+    case "login":
+      if(me){ await doLoginManage(arg); }
+      else w(" "+C.d+"未登录"+C.r+"\n");
+      prompt(); return;
+    case "logout": doLogout(); return;
+    case "whoami": w(" "+me.user+" ("+me.name+")\n"); prompt(); return;
+    case "ls": await doLs(); prompt(); return;
+    case "cd": await doCd(arg); prompt(); return;
+    case "new": await doNew(arg); prompt(); return;
+    case "register": await doRegister(arg); prompt(); return;
+    case "rn": await doRn(arg); prompt(); return;
+    case "rm": await doRm(arg); prompt(); return;
+    case "msg": await doMsg(arg); prompt(); return;
+    case "agent": await doAgent(arg); prompt(); return;
+    default: w(" "+C.d+"没有这个命令,输入 "+C.o+"help"+C.r+"\n"); prompt();
+  }
+}
+
+let line="", history=[], histIdx=0;
+function setLine(nl){ for(let i=0;i<line.length;i++) term.write("\b \b"); line=nl; term.write(line); }
+term.onData(d=>{
+  if(d==="\x1b[A"){ if(history.length){ if(histIdx>0) histIdx--; setLine(history[histIdx]); } return; }
+  if(d==="\x1b[B"){ if(history.length){ if(histIdx<history.length-1){ histIdx++; setLine(history[histIdx]); }
+                                        else { histIdx=history.length; setLine(""); } } return; }
+  if(d.charCodeAt(0)===27){ return; }
+  for(const ch of d){
+    if(ch==="\r"){ const l=line; w("\r\n"); if(l.trim()) history.push(l); histIdx=history.length; line=""; run(l); }
+    else if(ch==="\x7f"||ch==="\b"){ if(line.length){ line=line.slice(0,-1); term.write("\b \b"); } }
+    else if(ch==="\x03"){ w("^C"); line=""; histIdx=history.length; prompt(); }
+    else if(ch>=" "){ line+=ch; term.write(ch); }
+  }
+});
+
+boot();
+term.focus();
+addEventListener('click',()=>term.focus());
+</script>
+</body>
+</html>
