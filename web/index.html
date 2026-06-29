@@ -71,8 +71,8 @@ const REGISTRY = [
   ["rm",        "rm <序号> 撤销设备或关闭会话"],
   ["register",  "接入新机器,register --here <序号> 标记当前设备"],
   ["msg",       "msg [文字] 设备间消息(调试用)"],
-  ["login",     "管理登录设备, login switch 换账号"],
-  ["logout",    "logout 退出当前, logout <序号> 退出指定设备"],
+  ["login",     "查看登录状态, login switch 换账号"],
+  ["logout",    "退出登录"],
   ["agent",     "管理 agent token(agent new/revoke/ls)"],
   ["whoami",    "当前用户"],
   ["help",      "命令列表"],
@@ -314,28 +314,9 @@ async function doAgent(arg){
 // ── login 管理 ──
 async function doLoginManage(arg){
   const a = arg.trim();
-  const m = a.match(/^rm\s+(\S+)$/);
-  if(m){
-    let sid = m[1];
-    if(/^\d+$/.test(sid)){
-      const lr = await api("login-sessions");
-      if(lr.ok){ const s = lr.data.sessions[parseInt(sid)-1]; sid = s ? s.sid : sid; }
-    }
-    const r = await api("login-revoke?sid="+encodeURIComponent(sid));
-    if(r.ok) w(" "+C.g+"已退出"+C.r+"\n");
-    else w(" "+C.d+"没找到"+C.r+"\n");
-    return;
-  }
-  const r = await api("login-sessions");
-  if(!r.ok){ w(" "+C.d+"获取失败"+C.r+"\n"); return; }
-  const ss = r.data.sessions;
-  w("\n "+C.b+"登录设备"+C.r+C.d+" 共 "+ss.length+" 个"+C.r+"\n\n");
-  ss.forEach((s,i)=>{
-    const cur = s.current?" "+C.g+"← 当前"+C.r:"";
-    const dev = s.device_name || "未标记设备";
-    w("   "+C.y+String(i+1).padStart(2)+"."+C.r+" "+C.b+dev+C.r+C.d+"  "+s.browser+"  首次 "+fmtDate(s.registered)+"  上次 "+fmtDate(s.login)+C.r+cur+"\n");
-  });
-  w("\n "+C.d+"logout <序号> 退出设备  |  logout 退出当前"+C.r+"\n");
+  if(a==="switch"){ gotoLogin(); return; }
+  if(me){ w("\n "+C.g+"已登录"+C.r+" "+C.b+me.name+C.r+"\n"); await doLsDevices(); w(C.d+"   "+C.o+"login switch"+C.r+C.d+"  换账号   "+C.o+"logout"+C.r+C.d+"  退出登录"+C.r+"\n"); }
+  else { w(C.d+" 未登录"+C.r+"\n"); gotoLogin(); }
 }
 
 // ── 辅助 ──
@@ -434,18 +415,7 @@ async function run(cmdline){
       else { gotoLogin(); }
       prompt(); return;
     case "logout":
-      if(arg.trim()){
-        // logout <序号> = 退出指定登录设备
-        let sid = arg.trim();
-        if(/^\d+$/.test(sid)){
-          const lr = await api("login-sessions");
-          if(lr.ok){ const s = lr.data.sessions[parseInt(sid)-1]; sid = s ? s.sid : sid; }
-        }
-        const r = await api("login-revoke?sid="+encodeURIComponent(sid));
-        if(r.ok) w(" "+C.g+"已退出"+C.r+"\n");
-        else w(" "+C.d+"没找到"+C.r+"\n");
-        prompt();
-      } else { doLogout(); }
+      doLogout();
       return;
     case "whoami": w(" "+me.user+" ("+me.name+")\n"); prompt(); return;
     case "ls": await doLs(); prompt(); return;

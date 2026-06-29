@@ -436,10 +436,21 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if result:
                 login, display_name = result["login"], result["name"]
                 now = int(time.time())
-                sid = secrets.token_urlsafe(24)
                 sess = {k: v for k, v in _load(RTW_SESSIONS, {}).items() if v.get("expires", 0) > now}
                 ua = self.headers.get("User-Agent", "")
-                sess[sid] = {"user": login, "name": display_name, "expires": now + LOGIN_TTL, "login": now, "ua": ua[:120]}
+                # 复用已有 session
+                sid = None
+                for k, v in sess.items():
+                    if v.get("user") == login:
+                        sid = k
+                        v["expires"] = now + LOGIN_TTL
+                        v["name"] = display_name
+                        if not v.get("ua") and ua:
+                            v["ua"] = ua[:120]
+                        break
+                if not sid:
+                    sid = secrets.token_urlsafe(24)
+                    sess[sid] = {"user": login, "name": display_name, "expires": now + LOGIN_TTL, "login": now, "ua": ua[:120]}
                 _save(RTW_SESSIONS, sess)
                 self.send_header("Set-Cookie", "rtw_sess=%s; Path=/; Domain=.c-n-b.space; Secure; HttpOnly; SameSite=Lax; Max-Age=%d" % (sid, LOGIN_TTL))
             self.send_header("Location", "https://%s/terminal/authok.html" % SERVER_HOST)
@@ -499,6 +510,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
             row = valid_user(self)
             if row is None:
                 return self._json(401, {"error": "not_logged_in"})
+            # 自动清理同用户的旧 session，只保留当前
+            cur_sid = SimpleCookie(self.headers.get("Cookie", "")).get("rtw_sess")
+            if cur_sid:
+                sessions = _load(RTW_SESSIONS, {})
+                stale = [k for k, v in sessions.items() if v.get("user") == row[0] and k != cur_sid.value]
+                if stale:
+                    for k in stale:
+                        del sessions[k]
+                    _save(RTW_SESSIONS, sessions)
             return self._json(200, {"user": row[0], "name": row[1]})
 
         if path == "/api/login-sessions":
@@ -795,14 +815,22 @@ class Handler(http.server.BaseHTTPRequestHandler):
             return
 
         if path == "/api/login-start":
-            # GitHub OAuth 回跳到这里:有博客身份就签发平台登录会话(3 天),再回主页
+            # GitHub OAuth 回跳到这里:有博客身份就签发平台登录会话,再回主页
             row = cookie_user(self)
             now = int(time.time())
             headers = [("Location", "/terminal/authok.html")]
             if row is not None:
-                sid = secrets.token_urlsafe(24)
                 sess = {k: v for k, v in _load(RTW_SESSIONS, {}).items() if v.get("expires", 0) > now}
-                sess[sid] = {"user": row[0], "expires": now + LOGIN_TTL, "login": now}
+                # 复用已有 session，不重复创建
+                sid = None
+                for k, v in sess.items():
+                    if v.get("user") == row[0]:
+                        sid = k
+                        v["expires"] = now + LOGIN_TTL
+                        break
+                if not sid:
+                    sid = secrets.token_urlsafe(24)
+                    sess[sid] = {"user": row[0], "expires": now + LOGIN_TTL, "login": now}
                 _save(RTW_SESSIONS, sess)
                 headers.append(("Set-Cookie", "rtw_sess=%s; Path=/; Domain=.c-n-b.space; Secure; HttpOnly; SameSite=Lax; Max-Age=%d" % (sid, LOGIN_TTL)))
             self.send_response(302)
