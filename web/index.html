@@ -239,11 +239,18 @@ async function doMsg(arg){
     const ms = r.data.messages;
     if(!ms.length){ w("\n "+C.d+"没有消息"+C.r+"\n"); w(C.d+"   "+C.o+"msg"+C.r+C.d+" <文字> 公开广播   "+C.o+"msg @<序号>"+C.r+C.d+" <文字> 私信某设备"+C.r+"\n"); return; }
     w("\n");
+    const devs = await api("machines"); const devMap = {};
+    if(devs.ok) devs.data.machines.forEach(d=>{ devMap[d.id]=d.name; });
     ms.forEach(m=>{
       const t = fmtDate(m.ts);
       const tag = m.public?C.d+" [public]"+C.r:"";
       const to = m.public?"":C.d+" → "+C.r+C.b+(m.to_name||m.to)+C.r;
-      w(" "+C.d+t+" "+C.r+C.b+m.from+C.r+to+tag+C.d+":"+C.r+" "+m.text+"\n");
+      let readInfo = "";
+      if(m.read_by){
+        const entries = Object.entries(m.read_by).filter(([d])=>d!==m.from_id);
+        if(entries.length){ readInfo = C.d+"  ✓ "+entries.map(([d,t])=>(devMap[d]||d)+" "+fmtDate(t)).join(", ")+C.r; }
+      }
+      w(" "+C.d+t+" "+C.r+C.b+m.from+C.r+to+tag+C.d+":"+C.r+" "+m.text+readInfo+"\n");
     });
     return;
   }
@@ -380,7 +387,7 @@ async function boot(){
   if(r.ok){
     me = r.data;
     statusLine();
-    w(C.d+" "+C.o+"register"+C.r+C.d+" 接入新机器   "+C.o+"msg"+C.r+C.d+" 消息   "+C.o+"login"+C.r+C.d+" 管理登录   "+C.o+"help"+C.r+C.d+" 更多"+C.r+"\n");
+    w(C.d+" "+C.o+"cd "+C.c+"<序号>"+C.r+C.d+" 进入设备   "+C.o+"register"+C.r+C.d+" 接入新机器   "+C.o+"msg"+C.r+C.d+" 消息   "+C.o+"help"+C.r+C.d+" 更多"+C.r+"\n");
     await doLsDevices();
   } else {
     me = null;
@@ -396,7 +403,7 @@ async function run(cmdline){
   if(!cmd){ prompt(); return; }
 
   if(cmd==="clear"){ term.clear(); w(BANNER+"\n"); statusLine();
-    if(me){ w(C.d+" "+C.o+"register"+C.r+C.d+" 接入新机器   "+C.o+"msg"+C.r+C.d+" 消息   "+C.o+"login"+C.r+C.d+" 管理登录   "+C.o+"help"+C.r+C.d+" 更多"+C.r+"\n"); await doLsDevices(); }
+    if(me){ w(C.d+" "+C.o+"cd "+C.c+"<序号>"+C.r+C.d+" 进入设备   "+C.o+"register"+C.r+C.d+" 接入新机器   "+C.o+"msg"+C.r+C.d+" 消息   "+C.o+"help"+C.r+C.d+" 更多"+C.r+"\n"); await doLsDevices(); }
     prompt(); return; }
   if(cmd==="help"){ help(); prompt(); return; }
 

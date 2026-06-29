@@ -574,6 +574,18 @@ class Handler(http.server.BaseHTTPRequestHandler):
             msgs = _load(MESSAGES, {})
             all_msgs = msgs.get(row[0], [])
             visible = [m for m in all_msgs if m.get("public") or not m.get("to") or m.get("to") == cur_device or m.get("from_id") == cur_device]
+            # 记录当前设备的首次阅读时间
+            now = int(time.time())
+            dirty = False
+            if cur_device:
+                for m in visible:
+                    if m.get("from_id") != cur_device:
+                        reads = m.setdefault("read_by", {})
+                        if cur_device not in reads:
+                            reads[cur_device] = now
+                            dirty = True
+            if dirty:
+                _save(MESSAGES, msgs)
             return self._json(200, {"messages": visible[-50:]})
 
         if path == "/api/msg-send":
