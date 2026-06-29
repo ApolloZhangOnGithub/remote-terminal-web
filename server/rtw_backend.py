@@ -370,12 +370,41 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             return
 
-        if STANDALONE and path == "/auth/callback":
+        if path == "/auth/callback":
             code = (q.get("code") or [""])[0]
-            result = standalone_auth.exchange_code(code) if code else None
+            state = (q.get("state") or [""])[0]
+            is_rtw = state.startswith("rtw_")
+            result = standalone_auth.exchange_code(code) if (STANDALONE and code) else None
+            if not is_rtw:
+                if not result:
+                    self.send_response(302)
+                    self.send_header("Location", "https://%s/login" % SERVER_HOST)
+                    self.end_headers()
+                    return
+                import urllib.request as ur
+                try:
+                    blog_url = "http://127.0.0.1:8090/auth/github-proxy-callback"
+                    data = json.dumps({"login": result["login"], "name": result["name"],
+                                       "id": result["id"], "avatar_url": result.get("avatar_url", ""),
+                                       "state": state}).encode()
+                    req = ur.Request(blog_url, data=data, headers={"Content-Type": "application/json", "Cookie": self.headers.get("Cookie", "")})
+                    resp = ur.urlopen(req, timeout=10)
+                    self.send_response(resp.status)
+                    for h in ("Set-Cookie", "Location"):
+                        for val in resp.headers.get_all(h) or []:
+                            self.send_header(h, val)
+                    self.end_headers()
+                    body = resp.read()
+                    if body:
+                        self.wfile.write(body)
+                except Exception as e:
+                    self.send_response(302)
+                    self.send_header("Location", "https://%s/login" % SERVER_HOST)
+                    self.end_headers()
+                return
             self.send_response(302)
             if result:
-                login, display_name = result
+                login, display_name = result["login"], result["name"]
                 now = int(time.time())
                 sid = secrets.token_urlsafe(24)
                 sess = {k: v for k, v in _load(RTW_SESSIONS, {}).items() if v.get("expires", 0) > now}

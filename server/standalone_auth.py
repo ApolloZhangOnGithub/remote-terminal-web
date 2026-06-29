@@ -54,7 +54,7 @@ def _opener():
 
 
 def exchange_code(code):
-    """用 OAuth code 换 GitHub 用户信息;返回 (login, display_name) 或 None。"""
+    """用 OAuth code 换 GitHub 用户信息;返回 dict 或 None。"""
     try:
         opener = _opener()
         data = json.dumps({"client_id": CLIENT_ID, "client_secret": CLIENT_SECRET, "code": code}).encode()
@@ -69,8 +69,10 @@ def exchange_code(code):
             headers={"Authorization": "Bearer " + access, "Accept": "application/json"})
         info = json.loads(opener.open(ureq, timeout=10).read())
         login = info.get("login")
-        name = info.get("name") or login
-        return (login, name) if login else None
+        if not login:
+            return None
+        return {"login": login, "name": info.get("name") or login,
+                "id": info.get("id"), "avatar_url": info.get("avatar_url")}
     except Exception:
         return None
 
