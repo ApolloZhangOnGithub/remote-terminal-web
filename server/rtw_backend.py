@@ -127,7 +127,11 @@ def valid_user(handler):
     if not row:
         return None
     sess = get_rtw_sess(handler)
-    if not sess or sess.get("user") != row[0]:
+    if not sess:
+        return None
+    su = (sess.get("user") or "").lower()
+    ru = (row[0] or "").lower()
+    if su != ru and su != ru.rstrip("0123456789"):
         return None
     return row
 
@@ -147,12 +151,15 @@ def port_alive(port):
 def my_machines(username):
     machines = _load(MACHINES, {})
     out = []
+    ulow = username.lower()
+    ustrip = ulow.rstrip("0123456789")
     for mid, m in machines.items():
-        if username in m.get("owners", []):
+        owners = [o.lower() for o in m.get("owners", [])]
+        if ulow in owners or ustrip in owners:
             out.append({
                 "id": mid,
                 "name": m.get("name", mid),
-                "online": port_alive(m.get("port")),   # 隧道端口在监听 = 在线
+                "online": port_alive(m.get("port")),
             })
     return out
 
