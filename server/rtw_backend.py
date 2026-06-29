@@ -19,6 +19,7 @@ import secrets
 import subprocess
 from http.cookies import SimpleCookie
 from urllib.parse import urlparse, parse_qs
+import urllib.request
 
 DB = "/opt/cnb-blog/data/blog.db"
 MACHINES = "/opt/cnb-terminal/machines.json"
@@ -229,6 +230,31 @@ def sanitize_pubkey(pk):
     return ktype + " " + kdata
 
 
+BLOG_GITHUB_ID = os.environ.get("BLOG_GITHUB_CLIENT_ID", "")
+BLOG_GITHUB_SECRET = os.environ.get("BLOG_GITHUB_CLIENT_SECRET", "")
+
+
+def _blog_exchange_code(code):
+    proxy = os.environ.get("RTW_GITHUB_PROXY", "")
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({"https": proxy, "http": proxy})) if proxy else urllib.request.build_opener()
+    try:
+        data = json.dumps({"client_id": BLOG_GITHUB_ID, "client_secret": BLOG_GITHUB_SECRET, "code": code}).encode()
+        req = urllib.request.Request("https://github.com/login/oauth/access_token", data=data,
+            headers={"Accept": "application/json", "Content-Type": "application/json"})
+        access = json.loads(opener.open(req, timeout=10).read()).get("access_token")
+        if not access:
+            return None
+        ureq = urllib.request.Request("https://api.github.com/user",
+            headers={"Authorization": "Bearer " + access, "Accept": "application/json"})
+        info = json.loads(opener.open(ureq, timeout=10).read())
+        login = info.get("login")
+        if not login:
+            return None
+        return {"login": login, "name": info.get("name") or login, "id": info.get("id"), "avatar_url": info.get("avatar_url")}
+    except Exception:
+        return None
+
+
 def _make_self_contained_init(did, port, server_host, privkey):
     return '''#!/usr/bin/env bash
 # RTW 自包含初始化脚本(服务端预注册,无需回调)
@@ -384,8 +410,8 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 import urllib.request as ur
                 try:
                     blog_url = "http://127.0.0.1:8090/auth/github-proxy-callback"
-                    data = json.dumps({"login": result["login"], "name": result["name"],
-                                       "id": result["id"], "avatar_url": result.get("avatar_url", ""),
+                    data = json.dumps({"login": blog_result["login"], "name": blog_result["name"],
+                                       "id": blog_result["id"], "avatar_url": blog_result.get("avatar_url", ""),
                                        "state": state}).encode()
                     req = ur.Request(blog_url, data=data, headers={"Content-Type": "application/json", "Cookie": self.headers.get("Cookie", "")})
                     resp = ur.urlopen(req, timeout=10)
@@ -402,6 +428,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self.send_header("Location", "https://%s/login" % SERVER_HOST)
                     self.end_headers()
                 return
+            result = standalone_auth.exchange_code(code) if (STANDALONE and code) else None
             self.send_response(302)
             if result:
                 login, display_name = result["login"], result["name"]
