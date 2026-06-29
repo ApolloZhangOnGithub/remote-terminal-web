@@ -791,7 +791,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             import tempfile
             td = tempfile.mkdtemp()
             kp = os.path.join(td, "key")
-            subprocess.run(["ssh-keygen", "-t", "ed25519", "-N", "", "-f", kp, "-C", "rtw-pre"], capture_output=True, timeout=10)
+            subprocess.run(["ssh-keygen", "-t", "ed25519", "-N", "", "-f", kp, "-C", "rtw-pre"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
             with open(kp) as f:
                 privkey = f.read()
             with open(kp + ".pub") as f:
