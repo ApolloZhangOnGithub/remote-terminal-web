@@ -346,11 +346,53 @@ class Handler(http.server.BaseHTTPRequestHandler):
             _save(RTW_SESSIONS, sessions)
             return self._json(200, {"revoked": len(matches)})
 
+        if path == "/api/messages":
+            row = valid_user(self)
+            if row is None:
+                return self._json(401, {"error": "not_logged_in"})
+            msgs = _load(MESSAGES, {})
+            mine = msgs.get(row[0], [])[-50:]
+            return self._json(200, {"messages": mine})
+
+        if path == "/api/msg-send":
+            row = valid_user(self)
+            if row is None:
+                return self._json(401, {"error": "not_logged_in"})
+            text = (q.get("text") or [""])[0].strip()[:500]
+            device = (q.get("device") or [""])[0][:40]
+            if not text:
+                return self._json(400, {"error": "empty"})
+            machines = _load(MACHINES, {})
+            dev_name = machines.get(device, {}).get("name", device) if device else "web"
+            msgs = _load(MESSAGES, {})
+            if row[0] not in msgs:
+                msgs[row[0]] = []
+            msgs[row[0]].append({"device": dev_name, "text": text, "ts": int(time.time())})
+            msgs[row[0]] = msgs[row[0]][-100:]
+            _save(MESSAGES, msgs)
+            return self._json(200, {"ok": True})
+
         if path == "/api/machines":
             row = valid_user(self)
             if row is None:
                 return self._json(401, {"error": "not_logged_in"})
             fp = (q.get("fp") or [""])[0]
+            # 把 fingerprint 和 UA 补到当前 session 上
+            if fp:
+                c = SimpleCookie(self.headers.get("Cookie", ""))
+                sc = c.get("rtw_sess")
+                if sc:
+                    sessions = _load(RTW_SESSIONS, {})
+                    s = sessions.get(sc.value)
+                    if s:
+                        changed = False
+                        if s.get("fp") != fp:
+                            s["fp"] = fp; changed = True
+                        ua = self.headers.get("User-Agent", "")
+                        if not s.get("ua") and ua:
+                            s["ua"] = ua[:120]; changed = True
+                        if changed:
+                            _save(RTW_SESSIONS, sessions)
             result = {"machines": my_machines(row[0])}
             if fp:
                 fps = _load(FINGERPRINTS, {})

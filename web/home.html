@@ -47,7 +47,7 @@ function browserFP(){
 function pathStr(){ return cwd ? ("~/"+cwd) : "~"; }
 function prompt(){ w("\r\n"+C.c+pathStr()+C.d+" $ "+C.r); }
 
-const VERSION = "v0.2.0";
+const VERSION = "v0.1.1";
 const BANNER = C.b+C.o+" Remote Terminal Web "+C.r+C.d+VERSION+C.r+"\n"+
                C.d+" 在浏览器里进入你自己的机器"+C.r+"\n";
 
@@ -66,7 +66,7 @@ const REGISTRY = [
   ["ls",        "列出设备(根目录)或会话(设备内)"],
   ["cd",        "进入设备或会话,cd .. 返回"],
   ["new",       "新建会话(设备内)"],
-  ["rn",        "mv <序号> 新名字"],
+  ["rn",        "rn <序号> 新名字"],
   ["rm",        "rm <序号> 撤销设备或关闭会话"],
   ["register",  "接入新机器,register --here <序号> 标记当前设备"],
   ["msg",       "msg [文字] 设备间消息(调试用)"],
