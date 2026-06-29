@@ -8,10 +8,10 @@ RTW_SERVER="${RTW_SERVER:-c-n-b.space}"
 RTW_TOKEN="${RTW_TOKEN:-}"
 RTW_LOCAL_PORT="${RTW_LOCAL_PORT:-7681}"     # 本机 ttyd 端口,默认 7681
 RTW_DIR="$HOME/.rtw"
+RTW_CONF="$RTW_DIR/config"
 say(){ printf "[RTW] %s\n" "$1"; }
 die(){ printf "[RTW] 错误: %s\n" "$1" >&2; exit 1; }
 
-[ -n "$RTW_TOKEN" ] || die "缺少 RTW_TOKEN(在网页里运行 register 获取整条接入命令)"
 OS="$(uname -s)"
 
 # 1) 依赖
@@ -31,16 +31,31 @@ KEY="$RTW_DIR/tunnel_key"
 [ -f "$KEY" ] || ssh-keygen -t ed25519 -N "" -f "$KEY" -C "rtw-$(hostname)" >/dev/null
 PUB="$(cat "$KEY.pub")"
 
-# 3) 注册
-HOSTN="$(hostname | sed 's/\.local$//')"
-say "向 $RTW_SERVER 注册本机($HOSTN)"
-RESP="$(curl -fsS -X POST "https://$RTW_SERVER/terminal/api/register" \
-  -H "Content-Type: application/json" \
-  -d "{\"token\":\"$RTW_TOKEN\",\"pubkey\":\"$PUB\",\"name\":\"$HOSTN\"}")" || die "注册请求失败"
-get(){ printf '%s' "$RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('$1',''))"; }
-DID="$(get device_id)"; TPORT="$(get tunnel_port)"; TUSER="$(get tunnel_user)"; THOST="$(get tunnel_host)"
-[ -n "$DID" ] && [ -n "$TPORT" ] || die "注册返回异常: $RESP"
-say "已注册:设备 id $DID,隧道端口 $TPORT"
+# 3) 检测当前设备是否已注册
+if [ -f "$RTW_CONF" ] && [ -z "$RTW_TOKEN" ]; then
+  . "$RTW_CONF"
+  say "当前设备已注册(设备 $DID),重启服务上线"
+else
+  [ -n "$RTW_TOKEN" ] || die "首次接入需要 RTW_TOKEN(在网页里运行 register 获取整条接入命令)"
+  HOSTN="$(hostname | sed 's/\.local$//')"
+  say "向 $RTW_SERVER 注册本机($HOSTN)"
+  RESP="$(curl -fsS -X POST "https://$RTW_SERVER/terminal/api/register" \
+    -H "Content-Type: application/json" \
+    -d "{\"token\":\"$RTW_TOKEN\",\"pubkey\":\"$PUB\",\"name\":\"$HOSTN\"}")" || die "注册请求失败"
+  get(){ printf '%s' "$RESP" | python3 -c "import sys,json;print(json.load(sys.stdin).get('$1',''))"; }
+  DID="$(get device_id)"; TPORT="$(get tunnel_port)"; TUSER="$(get tunnel_user)"; THOST="$(get tunnel_host)"
+  [ -n "$DID" ] && [ -n "$TPORT" ] || die "注册返回异常: $RESP"
+  RTW_SERVER="$RTW_SERVER"
+  cat > "$RTW_CONF" <<CEOF
+DID="$DID"
+TPORT="$TPORT"
+TUSER="$TUSER"
+THOST="$THOST"
+RTW_SERVER="$RTW_SERVER"
+RTW_LOCAL_PORT="$RTW_LOCAL_PORT"
+CEOF
+  say "注册成功:设备 $DID,隧道端口 $TPORT"
+fi
 
 # 4) ttyd 包装(按 URL 的 arg 重连同名 tmux 会话,状态不丢)
 WRAP="$RTW_DIR/web-term"

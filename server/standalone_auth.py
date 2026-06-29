@@ -28,7 +28,7 @@ CLIENT_ID = os.environ.get("RTW_GITHUB_CLIENT_ID", "")
 CLIENT_SECRET = os.environ.get("RTW_GITHUB_CLIENT_SECRET", "")
 SECRET = os.environ.get("RTW_SECRET", "change-me-please").encode()
 HOST = os.environ.get("RTW_SERVER_HOST", "localhost")
-SESSION_TTL = 3 * 86400
+SESSION_TTL = 365 * 86400
 
 
 def authorize_url(state):

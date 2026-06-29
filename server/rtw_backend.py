@@ -26,11 +26,13 @@ SESSIONS = "/opt/cnb-terminal/sessions.json"
 REG_TOKENS = "/opt/cnb-terminal/reg_tokens.json"
 RTW_SESSIONS = "/opt/cnb-terminal/rtw_sessions.json"
 AGENT_TOKENS = "/opt/cnb-terminal/agent_tokens.json"
+FINGERPRINTS = "/opt/cnb-terminal/fingerprints.json"
+MESSAGES = "/opt/cnb-terminal/messages.json"
 AUTHKEYS = "/home/rtwtun/.ssh/authorized_keys"
 PORTS_MAP = "/etc/nginx/rtw-ports.map"
 SERVER_HOST = os.environ.get("RTW_SERVER_HOST", "c-n-b.space")
 LOCAL_TTYD_PORT = 7681      # 每台机器本地 ttyd 端口(固定)
-LOGIN_TTL = 3 * 86400       # 网页登录会话有效期(3 天,过期需重新 GitHub 登录)
+LOGIN_TTL = 365 * 86400     # 登录会话有效期(1 年)
 PORT = 8092
 
 # 鉴权模式:默认复用既有(博客)登录;开源自托管设 RTW_STANDALONE_AUTH=1 用独立 GitHub OAuth
@@ -97,12 +99,18 @@ def get_rtw_sess(handler):
 
 
 def valid_user(handler):
+    if STANDALONE:
+        c = SimpleCookie(handler.headers.get("Cookie", ""))
+        sc = c.get("rtw_sess")
+        if not sc:
+            return None
+        rec = _load(RTW_SESSIONS, {}).get(sc.value)
+        if not rec or rec.get("expires", 0) < int(time.time()):
+            return None
+        return (rec["user"], rec.get("name", rec["user"]))
     row = cookie_user(handler)
     if not row:
         return None
-    if STANDALONE:
-        return row      # 独立模式:rtw_login 本身就是带签名+3天过期的会话
-    # 复用模式:博客身份有效 且 平台登录会话未过期(3 天)
     sess = get_rtw_sess(handler)
     if not sess or sess.get("user") != row[0]:
         return None
@@ -138,6 +146,32 @@ def owns_machine(username, mid):
     machines = _load(MACHINES, {})
     m = machines.get(mid)
     return bool(m) and username in m.get("owners", [])
+
+
+def _short_ua(ua):
+    if not ua:
+        return "未知"
+    os_name = "Unknown"
+    if "iPhone" in ua or "iPad" in ua:
+        os_name = "iOS"
+    elif "Mac OS" in ua or "Macintosh" in ua:
+        os_name = "Mac"
+    elif "Android" in ua:
+        os_name = "Android"
+    elif "Windows" in ua:
+        os_name = "Windows"
+    elif "Linux" in ua:
+        os_name = "Linux"
+    browser = "Unknown"
+    if "Edg/" in ua:
+        browser = "Edge"
+    elif "Chrome/" in ua and "Safari/" in ua:
+        browser = "Chrome"
+    elif "Safari/" in ua:
+        browser = "Safari"
+    elif "Firefox/" in ua:
+        browser = "Firefox"
+    return "%s/%s" % (browser, os_name)
 
 
 def machine_url(mid, sid):
@@ -203,8 +237,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
             user = standalone_auth.exchange_code(code) if code else None
             self.send_response(302)
             if user:
-                self.send_header("Set-Cookie", "rtw_login=%s; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=%d"
-                                 % (standalone_auth.make_cookie(user), standalone_auth.SESSION_TTL))
+                now = int(time.time())
+                sid = secrets.token_urlsafe(24)
+                sess = {k: v for k, v in _load(RTW_SESSIONS, {}).items() if v.get("expires", 0) > now}
+                ua = self.headers.get("User-Agent", "")
+                sess[sid] = {"user": user, "name": user, "expires": now + LOGIN_TTL, "login": now, "ua": ua[:120]}
+                _save(RTW_SESSIONS, sess)
+                self.send_header("Set-Cookie", "rtw_sess=%s; Path=/; Secure; HttpOnly; SameSite=Lax; Max-Age=%d" % (sid, LOGIN_TTL))
             self.send_header("Location", "/terminal/authok.html")
             self.end_headers()
             return
@@ -264,11 +303,61 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return self._json(401, {"error": "not_logged_in"})
             return self._json(200, {"user": row[0], "name": row[1]})
 
+        if path == "/api/login-sessions":
+            row = valid_user(self)
+            if row is None:
+                return self._json(401, {"error": "not_logged_in"})
+            now = int(time.time())
+            cur_sid = SimpleCookie(self.headers.get("Cookie", "")).get("rtw_sess")
+            cur_sid = cur_sid.value if cur_sid else ""
+            sessions = _load(RTW_SESSIONS, {})
+            fps = _load(FINGERPRINTS, {})
+            fp_to_dev = {fp: did for fp, did in fps.items()}
+            machines = _load(MACHINES, {})
+            out = []
+            for sid, s in sessions.items():
+                if s.get("user") == row[0] and s.get("expires", 0) > now:
+                    ua = s.get("ua", "")
+                    browser = _short_ua(ua)
+                    device_name = ""
+                    sfp = s.get("fp", "")
+                    if sfp and sfp in fp_to_dev:
+                        m = machines.get(fp_to_dev[sfp])
+                        if m:
+                            device_name = m.get("name", "")
+                    out.append({"sid": sid[:8], "login": s.get("login"),
+                                "browser": browser, "device_name": device_name,
+                                "current": sid == cur_sid})
+            return self._json(200, {"sessions": out})
+
+        if path == "/api/login-revoke":
+            row = valid_user(self)
+            if row is None:
+                return self._json(401, {"error": "not_logged_in"})
+            target = (q.get("sid") or [""])[0]
+            if not target:
+                return self._json(400, {"error": "missing_sid"})
+            sessions = _load(RTW_SESSIONS, {})
+            matches = [k for k in sessions if k.startswith(target) and sessions[k].get("user") == row[0]]
+            if not matches:
+                return self._json(404, {"error": "not_found"})
+            for k in matches:
+                del sessions[k]
+            _save(RTW_SESSIONS, sessions)
+            return self._json(200, {"revoked": len(matches)})
+
         if path == "/api/machines":
             row = valid_user(self)
             if row is None:
                 return self._json(401, {"error": "not_logged_in"})
-            return self._json(200, {"machines": my_machines(row[0])})
+            fp = (q.get("fp") or [""])[0]
+            result = {"machines": my_machines(row[0])}
+            if fp:
+                fps = _load(FINGERPRINTS, {})
+                matched = fps.get(fp)
+                if matched and owns_machine(row[0], matched):
+                    result["this_device"] = matched
+            return self._json(200, result)
 
         if path == "/api/sessions":
             row = valid_user(self)
@@ -326,6 +415,38 @@ class Handler(http.server.BaseHTTPRequestHandler):
             _save(SESSIONS, sessions)
             return self._json(200, {"id": sid, "name": name})
 
+        if path == "/api/device-rename":
+            row = valid_user(self)
+            if row is None:
+                return self._json(401, {"error": "not_logged_in"})
+            mid = (q.get("m") or [""])[0]
+            name = (q.get("name") or [""])[0].strip()[:40]
+            if not owns_machine(row[0], mid):
+                return self._json(403, {"error": "not_your_machine"})
+            if not name:
+                return self._json(400, {"error": "empty_name"})
+            machines = _load(MACHINES, {})
+            machines[mid]["name"] = name
+            _save(MACHINES, machines)
+            return self._json(200, {"id": mid, "name": name})
+
+        if path == "/api/mark-device":
+            row = valid_user(self)
+            if row is None:
+                return self._json(401, {"error": "not_logged_in"})
+            mid = (q.get("m") or [""])[0]
+            fp = (q.get("fp") or [""])[0]
+            if not fp or not mid:
+                return self._json(400, {"error": "missing_params"})
+            if not owns_machine(row[0], mid):
+                return self._json(403, {"error": "not_your_machine"})
+            fps = _load(FINGERPRINTS, {})
+            # 清掉指向同一设备的旧 fingerprint
+            fps = {k: v for k, v in fps.items() if v != mid}
+            fps[fp] = mid
+            _save(FINGERPRINTS, fps)
+            return self._json(200, {"ok": True, "device": mid})
+
         if path == "/api/close":
             row = valid_user(self)
             if row is None:
@@ -362,12 +483,45 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if row is None:
                 return self._json(401, {"error": "not_logged_in"})
             now = int(time.time())
-            toks = {k: v for k, v in _load(REG_TOKENS, {}).items() if v.get("expires", 0) > now}
+            toks = _load(REG_TOKENS, {})
+            # 清理过期 + 同一用户只保留一个活跃 token(新的替掉旧的)
+            toks = {k: v for k, v in toks.items()
+                    if v.get("expires", 0) > now and v.get("owner") != row[0]}
             tk = secrets.token_urlsafe(18)
             toks[tk] = {"owner": row[0], "expires": now + 1800}
             _save(REG_TOKENS, toks)
             cmd = "curl -fsSL https://%s/terminal/init.sh | RTW_TOKEN=%s RTW_SERVER=%s bash" % (SERVER_HOST, tk, SERVER_HOST)
             return self._json(200, {"token": tk, "command": cmd, "expires_in": 1800})
+
+        if path.startswith("/api/init-script"):
+            row = valid_user(self)
+            if row is None:
+                return self._json(401, {"error": "not_logged_in"})
+            tk = (q.get("token") or [""])[0]
+            now = int(time.time())
+            toks = _load(REG_TOKENS, {})
+            info = toks.get(tk)
+            if not info or info.get("expires", 0) < now or info.get("owner") != row[0]:
+                return self._json(403, {"error": "invalid_or_expired_token"})
+            script_path = os.path.join(os.path.dirname(MACHINES), "init.sh")
+            try:
+                with open(script_path) as f:
+                    script = f.read()
+            except Exception:
+                return self._json(500, {"error": "init.sh not found"})
+            patched = script.replace(
+                'RTW_TOKEN="${RTW_TOKEN:-}"',
+                'RTW_TOKEN="${RTW_TOKEN:-%s}"' % tk
+            ).replace(
+                'RTW_SERVER="${RTW_SERVER:-c-n-b.space}"',
+                'RTW_SERVER="${RTW_SERVER:-%s}"' % SERVER_HOST
+            )
+            self.send_response(200)
+            self.send_header("Content-Type", "application/x-shellscript")
+            self.send_header("Content-Disposition", "attachment; filename=rtw-init.sh")
+            self.end_headers()
+            self.wfile.write(patched.encode())
+            return
 
         if path == "/api/login-start":
             # GitHub OAuth 回跳到这里:有博客身份就签发平台登录会话(3 天),再回主页
@@ -505,15 +659,29 @@ class Handler(http.server.BaseHTTPRequestHandler):
             del toks[tk]
             _save(REG_TOKENS, toks)
             machines = _load(MACHINES, {})
+            # pubkey 已注册过 → 返回已有设备,不重复建
+            existing = None
+            for mid, m in machines.items():
+                if m.get("pubkey") == clean_pk and owner in m.get("owners", []):
+                    existing = (mid, m)
+                    break
+            if existing:
+                did, m = existing
+                return self._json(200, {
+                    "device_id": did, "tunnel_port": m["port"],
+                    "tunnel_user": "rtwtun", "tunnel_host": SERVER_HOST,
+                    "local_ttyd_port": LOCAL_TTYD_PORT,
+                    "already_registered": True,
+                })
             used = {m.get("port") for m in machines.values() if m.get("port")}
             port = 7700
             while port in used:
                 port += 1
             did = "d-" + secrets.token_hex(4)
-            machines[did] = {"owners": [owner], "port": port, "name": name, "online": False}
+            machines[did] = {"owners": [owner], "port": port, "name": name, "online": False, "pubkey": clean_pk}
             _save(MACHINES, machines)
             with open(AUTHKEYS, "a") as f:
-                f.write('no-pty,no-agent-forwarding,no-X11-forwarding,permitopen="none",permitlisten="127.0.0.1:%d" %s rtw-%s\n' % (port, clean_pk, did))
+                f.write('no-pty,no-agent-forwarding,no-X11-forwarding,permitlisten="127.0.0.1:%d" %s rtw-%s\n' % (port, clean_pk, did))
             with open(PORTS_MAP, "a") as f:
                 f.write("%s %d;\n" % (did, port))
             try:

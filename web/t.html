@@ -7,22 +7,46 @@
 <link rel="stylesheet" href="/terminal/xterm.css">
 <script src="/terminal/xterm.js"></script>
 <script src="/terminal/xterm-fit.js"></script>
+<script src="/terminal/xterm-unicode11.js"></script>
 <style>
   html,body{margin:0;height:100%;background:#0d1117;overflow:hidden}
   #wrap{display:flex;flex-direction:column;height:100%}
-  #term{flex:1;min-height:0;padding:6px}
-  #bar{display:flex;gap:6px;overflow-x:auto;padding:8px;background:#161b22;
-       border-top:1px solid #26303c;-webkit-overflow-scrolling:touch}
-  #bar button{flex:0 0 auto;background:#21262d;color:#e6edf3;border:1px solid #30363d;
-       border-radius:8px;padding:10px 12px;font-size:14px;font-family:monospace;
-       min-width:46px;touch-action:manipulation;cursor:pointer}
+  #term{flex:1;min-height:0;padding:6px;touch-action:pan-y}
+  #toolbar{position:fixed;bottom:6px;right:6px;z-index:10;display:flex;gap:6px;align-items:center}
+  #sel-btn{background:#21262d;color:#8b949e;border-color:#30363d}
+  #sel-btn.on{background:#58a6ff;color:#0d1117;border-color:#58a6ff}
+  #sel-overlay{display:none;position:absolute;inset:0;z-index:5;white-space:pre-wrap;word-break:break-all;
+       font-family:Menlo,Monaco,Consolas,"DejaVu Sans Mono",monospace;font-size:14px;
+       color:#e6edf3;background:#0d1117;padding:6px;overflow:auto;-webkit-user-select:text;user-select:text;
+       -webkit-overflow-scrolling:touch}
+  #sel-overlay.show{display:block}
+  #toolbar button{border-radius:50%;width:36px;height:36px;font-size:16px;
+       display:flex;align-items:center;justify-content:center;cursor:pointer;touch-action:manipulation;border:1px solid #30363d}
+  #toggle{background:#21262d;color:#8b949e}
+  #toggle.open{background:#ff8a65;color:#1a1208;border-color:#ff8a65}
+  #mic-btn{background:#1a3a1a;color:#4ade80;border-color:#2d5a2d;font-size:14px}
+  #mic-btn.on{background:#dc2626;color:#fff;border-color:#ef4444;animation:pulse 1.5s infinite}
+  @keyframes pulse{0%,100%{opacity:1}50%{opacity:.6}}
+  #bar{display:none;flex-wrap:wrap;gap:4px;padding:6px 6px 42px;background:#161b22;
+       border-top:1px solid #26303c;max-height:45vh;overflow-y:auto;-webkit-overflow-scrolling:touch}
+  #bar.show{display:flex}
+  #bar button{background:#21262d;color:#e6edf3;border:1px solid #30363d;
+       border-radius:6px;padding:8px 10px;font-size:13px;font-family:monospace;
+       min-width:38px;touch-action:manipulation;cursor:pointer}
   #bar button.on{background:#ff8a65;color:#1a1208;border-color:#ff8a65}
+  #bar button.sep{visibility:hidden;width:100%;height:0;padding:0;margin:0;border:none;min-width:0}
 </style>
 </head>
 <body>
 <div id="wrap">
   <div id="term"></div>
+  <div id="sel-overlay"></div>
   <div id="bar"></div>
+  <div id="toolbar">
+    <button id="sel-btn" onclick="toggleSelect(this)">📋</button>
+    <button id="mic-btn" onclick="toggleMic(this)" style="display:none">🎤</button>
+    <button id="toggle" onclick="toggleBar()">⌨</button>
+  </div>
 </div>
 <script>
 const qs = new URLSearchParams(location.search);
@@ -32,6 +56,9 @@ const term = new Terminal({ cursorBlink:true, fontSize:14, scrollback:5000,
   theme:{ background:'#0d1117', foreground:'#e6edf3', cursor:'#ff8a65' } });
 const fit = new FitAddon.FitAddon();
 term.loadAddon(fit);
+const unicode11 = new Unicode11Addon.Unicode11Addon();
+term.loadAddon(unicode11);
+term.unicode.activeVersion = '11';
 term.open(document.getElementById('term'));
 
 let ws, ctrlOn=false, altOn=false;
@@ -49,6 +76,7 @@ function connect(){
     const data = (typeof e.data==="string") ? e.data : new TextDecoder().decode(e.data);
     if(data[0]==="0") term.write(data.slice(1));   // OUTPUT,其余指令(标题/偏好)忽略
   };
+  ws.onerror = ()=>{ term.write("\r\n\x1b[31m[连接失败,可能未登录或设备离线,刷新重试]\x1b[0m\r\n"); };
   ws.onclose = ()=>{ term.write("\r\n\x1b[38;5;245m[连接已断开,刷新页面重连]\x1b[0m\r\n"); };
 }
 // 按 ttyd 协议用二进制帧发送
@@ -70,32 +98,42 @@ term.onData(d=>{
   sendInput(d);
 });
 
-// 移动端按键栏(避免箭头符号,用文字标签)
 const KEYS = [
   ["Esc",  ()=>sendInput("\x1b")],
   ["Tab",  ()=>sendInput("\t")],
   ["Ctrl", ()=>{ ctrlOn=!ctrlOn; altOn=false; render(); }, ()=>ctrlOn],
   ["Alt",  ()=>{ altOn=!altOn; ctrlOn=false; render(); }, ()=>altOn],
+  ["^C",   ()=>sendInput("\x03")],
+  ["^D",   ()=>sendInput("\x04")],
+  ["^Z",   ()=>sendInput("\x1a")],
   ["Up",   ()=>sendInput("\x1b[A")],
   ["Down", ()=>sendInput("\x1b[B")],
   ["Left", ()=>sendInput("\x1b[D")],
   ["Right",()=>sendInput("\x1b[C")],
-  ["Home", ()=>sendInput("\x1b[H")],
-  ["End",  ()=>sendInput("\x1b[F")],
-  ["^C",   ()=>sendInput("\x03")],
-  ["^D",   ()=>sendInput("\x04")],
-  ["^Z",   ()=>sendInput("\x1a")],
-  ["C-b",  ()=>sendInput("\x02")],   // tmux 前缀键:之后按 % 竖分屏、" 横分屏、o 切换、c 新窗口
-  ["%",    ()=>sendInput("%")],
-  ['"',    ()=>sendInput('"')],
-  ["|",    ()=>sendInput("|")],
-  ["?",    ()=>sendInput("?")],
+  ["Return",()=>sendInput("\r")],
+  ["---"],
+  ["-",    ()=>sendInput("-")],
+  ["_",    ()=>sendInput("_")],
   ["/",    ()=>sendInput("/")],
+  ["?",    ()=>sendInput("?")],
+  ["|",    ()=>sendInput("|")],
   ["~",    ()=>sendInput("~")],
+  ["*",    ()=>sendInput("*")],
+  ["=",    ()=>sendInput("=")],
+  ['"',    ()=>sendInput('"')],
+  ["'",    ()=>sendInput("'")],
+  ["%",    ()=>sendInput("%")],
+  ["$",    ()=>sendInput("$")],
+  ["!",    ()=>sendInput("!")],
+  ["&",    ()=>sendInput("&")],
+  ["<",    ()=>sendInput("<")],
+  [">",    ()=>sendInput(">")],
+  ["C-b",  ()=>sendInput("\x02")],
 ];
 const bar = document.getElementById('bar');
 const btns = KEYS.map(([label, fn, state])=>{
   const b=document.createElement('button');
+  if(label==="---"){ b.className="sep"; bar.appendChild(b); return b; }
   b.textContent=label;
   b.addEventListener('click',(ev)=>{ ev.preventDefault(); fn(); term.focus(); });
   b.dataset.state = state ? "1" : "";
@@ -104,6 +142,103 @@ const btns = KEYS.map(([label, fn, state])=>{
   return b;
 });
 function render(){ btns.forEach(b=>{ if(b._state) b.classList.toggle('on', !!b._state()); }); }
+function toggleBar(){
+  const b=document.getElementById('bar'), t=document.getElementById('toggle');
+  b.classList.toggle('show'); t.classList.toggle('open');
+  setTimeout(refit, 50);
+}
+
+// ── Mic: browser audio → server ear ──
+let micOn=false, micStream=null, micCtx=null, micWs=null, micProc=null;
+const MIC_RATE=16000;
+
+// ── 复制模式：把终端文本放到可选中的 overlay 上 ──
+let selMode=false;
+function toggleSelect(btn){
+  const ov=document.getElementById('sel-overlay');
+  selMode=!selMode;
+  if(selMode){
+    let lines=[];
+    const buf=term.buffer.active;
+    const start=Math.max(0, buf.baseY);
+    for(let i=start;i<=buf.baseY+buf.cursorY;i++){
+      const line=buf.getLine(i);
+      if(line) lines.push(line.translateToString(true));
+    }
+    ov.textContent=lines.join('\n');
+    ov.classList.add('show');
+    btn.classList.add('on');
+  } else {
+    ov.classList.remove('show');
+    btn.classList.remove('on');
+    term.focus();
+  }
+}
+
+async function toggleMic(btn){
+  if(micOn){ stopMic(); btn.classList.remove('on'); btn.textContent='🎤'; term.focus(); return; }
+  term.write("\r\n\x1b[33m[Mic] starting...\x1b[0m\r\n");
+  try{
+    micStream = await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:true,noiseSuppression:true}});
+    micCtx = new AudioContext();
+    const source = micCtx.createMediaStreamSource(micStream);
+    const srcRate = micCtx.sampleRate;
+    const ratio = srcRate / MIC_RATE;
+    const bufSize = Math.pow(2, Math.ceil(Math.log2(MIC_RATE * 0.1)));
+    micProc = micCtx.createScriptProcessor(bufSize, 1, 1);
+    const proto = location.protocol==="https:"?"wss":"ws";
+    micWs = new WebSocket(proto+"://"+location.host+"/mic/"+encodeURIComponent(dev));
+    micWs.binaryType = "arraybuffer";
+    let wsReady=false;
+    micWs.onopen=()=>{ wsReady=true; };
+    micWs.onerror=()=>{ term.write("\r\n\x1b[31m[Mic] WebSocket error\x1b[0m\r\n"); };
+    micWs.onclose=()=>{ wsReady=false; if(micOn){ stopMic(); btn.classList.remove('on'); btn.textContent='🎤'; } };
+    micProc.onaudioprocess = e => {
+      if(!wsReady) return;
+      const inp = e.inputBuffer.getChannelData(0);
+      const outLen = Math.floor(inp.length / ratio);
+      const pcm = new Int16Array(outLen);
+      for(let i=0;i<outLen;i++){
+        const s = inp[Math.round(i*ratio)];
+        pcm[i] = s<0 ? Math.max(-32768, Math.round(s*32768)) : Math.min(32767, Math.round(s*32767));
+      }
+      micWs.send(pcm.buffer);
+    };
+    source.connect(micProc);
+    micProc.connect(micCtx.destination);
+    micOn=true; btn.classList.add('on'); btn.textContent='🔴';
+    term.write("\r\n\x1b[32m[Mic] recording...\x1b[0m\r\n");
+  }catch(err){
+    term.write("\r\n\x1b[31m[Mic] ERROR: "+String(err)+"\x1b[0m\r\n");
+    stopMic(); btn.classList.remove('on'); btn.textContent='🎤';
+  }
+  term.focus();
+}
+function stopMic(){
+  micOn=false;
+  if(micProc){ micProc.disconnect(); micProc=null; }
+  if(micCtx){ micCtx.close(); micCtx=null; }
+  if(micStream){ micStream.getTracks().forEach(t=>t.stop()); micStream=null; }
+  if(micWs){ micWs.close(); micWs=null; }
+}
+
+// ── 手机触摸滚动（两指滑动） ──
+// 单指留给 xterm 做光标/选择，两指垂直滑 = 翻页
+(function(){
+  let sy=0, active=false;
+  document.addEventListener('touchstart', e=>{
+    if(e.touches.length===2){ sy=(e.touches[0].clientY+e.touches[1].clientY)/2; active=true; }
+    else active=false;
+  }, {passive:true});
+  document.addEventListener('touchmove', e=>{
+    if(!active||e.touches.length!==2) return;
+    const cy=(e.touches[0].clientY+e.touches[1].clientY)/2;
+    const dy=sy-cy;
+    if(Math.abs(dy)>4){ term.scrollLines(Math.round(dy/10)); sy=cy; }
+    e.preventDefault();
+  }, {passive:false});
+  document.addEventListener('touchend', ()=>{ active=false; }, {passive:true});
+})();
 
 connect();
 term.focus();
