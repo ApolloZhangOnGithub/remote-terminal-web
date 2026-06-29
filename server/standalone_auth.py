@@ -35,7 +35,7 @@ CALLBACK_HOST = os.environ.get("RTW_CALLBACK_HOST", HOST)
 
 
 def authorize_url(state):
-    cb = "https://%s/auth/callback" % CALLBACK_HOST
+    cb = "https://%s/docs/auth/callback" % CALLBACK_HOST
     return ("https://github.com/login/oauth/authorize"
             "?client_id=%s&redirect_uri=%s&scope=read:user&state=rtw_%s" % (CLIENT_ID, cb, state))
 
