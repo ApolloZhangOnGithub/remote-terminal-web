@@ -127,8 +127,10 @@ async function doLsDevices(){
     }
     w("   "+C.c+cmd+C.r+"\n");
   }
-  if(!thisDevice){ w(C.d+"   运行 "+C.o+"register --here <序号>"+C.r+C.d+" 标记你正在用的设备"+C.r+"\n"); }
-  w(C.d+"   "+C.o+"cd"+C.r+C.d+" <序号> 进入  |  "+C.o+"rn"+C.r+C.d+" <序号> 新名字  |  "+C.o+"register"+C.r+C.d+" 接入新机器  |  "+C.o+"help"+C.r+C.d+" 更多"+C.r+"\n");
+  if(!thisDevice){ w(C.d+"   "+C.o+"register --here <序号>"+C.r+C.d+"  标记你正在用的设备"+C.r+"\n"); }
+  w(C.d+"   "+C.o+"cd"+C.r+C.d+" <序号>          进入设备"+C.r+"\n");
+  w(C.d+"   "+C.o+"rn"+C.r+C.d+" <序号> 新名字   改名"+C.r+"\n");
+  w(C.d+"   "+C.o+"rm"+C.r+C.d+" <序号>          撤销设备"+C.r+"\n");
 }
 
 async function doLsSessions(){
@@ -387,7 +389,7 @@ async function boot(){
   if(r.ok){
     me = r.data;
     statusLine();
-    w(""+"\n");
+    w(C.d+" "+C.o+"register"+C.r+C.d+" 接入新机器   "+C.o+"msg"+C.r+C.d+" 消息   "+C.o+"login"+C.r+C.d+" 管理登录   "+C.o+"help"+C.r+C.d+" 更多"+C.r+"\n");
     await doLsDevices();
   } else {
     me = null;
@@ -403,7 +405,7 @@ async function run(cmdline){
   if(!cmd){ prompt(); return; }
 
   if(cmd==="clear"){ term.clear(); w(BANNER+"\n"); statusLine();
-    if(me){ w(""+"\n"); await doLsDevices(); }
+    if(me){ w(C.d+" "+C.o+"register"+C.r+C.d+" 接入新机器   "+C.o+"msg"+C.r+C.d+" 消息   "+C.o+"login"+C.r+C.d+" 管理登录   "+C.o+"help"+C.r+C.d+" 更多"+C.r+"\n"); await doLsDevices(); }
     prompt(); return; }
   if(cmd==="help"){ help(); prompt(); return; }
 

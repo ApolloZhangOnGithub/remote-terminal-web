@@ -98,6 +98,21 @@ def get_rtw_sess(handler):
     return rec
 
 
+UNREGISTERED_TTL = 24 * 3600
+
+
+def _session_alive(rec, now):
+    if rec.get("expires", 0) < now:
+        return False
+    fp = rec.get("fp", "")
+    if fp:
+        fps = _load(FINGERPRINTS, {})
+        if fp in fps:
+            return True
+    # 没有匹配设备的 session,24h 后过期
+    return now - rec.get("login", 0) < UNREGISTERED_TTL
+
+
 def valid_user(handler):
     if STANDALONE:
         c = SimpleCookie(handler.headers.get("Cookie", ""))
@@ -105,7 +120,7 @@ def valid_user(handler):
         if not sc:
             return None
         rec = _load(RTW_SESSIONS, {}).get(sc.value)
-        if not rec or rec.get("expires", 0) < int(time.time()):
+        if not rec or not _session_alive(rec, int(time.time())):
             return None
         return (rec["user"], rec.get("name", rec["user"]))
     row = cookie_user(handler)
@@ -317,7 +332,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             machines = _load(MACHINES, {})
             out = []
             for sid, s in sessions.items():
-                if s.get("user") == row[0] and s.get("expires", 0) > now:
+                if s.get("user") == row[0] and _session_alive(s, now):
                     ua = s.get("ua", "")
                     browser = _short_ua(ua)
                     device_name = ""
