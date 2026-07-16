@@ -375,7 +375,7 @@ function gotoLogin(){
   const popup = window.open(OAUTH, "rtw_login", "width=540,height=720");
   if(!popup){ w(C.d+" 弹窗被拦截,改为跳转"+C.r); location.href=OAUTH; return; }
   w(C.c+" 已打开 GitHub 授权窗口\n"+C.r);
-  let tries=0, settled=false;
+  let tries=0, settled=false, closedAt=0;
   const check = async ()=>{
     if(settled) return;
     pollBusy=true; tries++;
@@ -390,12 +390,14 @@ function gotoLogin(){
       try{ popup.close(); }catch(e){}
       return;
     }
-    if(popup.closed || tries>160){
+    if(popup.closed && !closedAt) closedAt = tries;
+    const giveUp = (closedAt && tries - closedAt >= 5) || tries>160;
+    if(giveUp){
       settled=true; pollTimer=null;
       if(!me){ w("\r\n"+C.d+" 登录超时,重试 "+C.o+"login"+C.r+"\n"); prompt(); }
       return;
     }
-    pollTimer = setTimeout(check, 1500);
+    pollTimer = setTimeout(check, closedAt ? 800 : 1500);
   };
   pollTimer = setTimeout(check, 1500);
 }
