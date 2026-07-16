@@ -441,6 +441,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                         if v.get("user") == login:
                             sid = k
                             v["expires"] = now + LOGIN_TTL
+                            v["login"] = now
                             v["name"] = display_name
                             if not v.get("ua") and ua:
                                 v["ua"] = ua[:120]
@@ -494,6 +495,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     if v.get("user") == login:
                         sid = k
                         v["expires"] = now + LOGIN_TTL
+                        v["login"] = now
                         v["name"] = display_name
                         if not v.get("ua") and ua:
                             v["ua"] = ua[:120]
@@ -941,6 +943,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     if v.get("user") == row[0]:
                         sid = k
                         v["expires"] = now + LOGIN_TTL
+                        v["login"] = now
                         break
                 if not sid:
                     sid = secrets.token_urlsafe(24)
