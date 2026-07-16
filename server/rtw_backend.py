@@ -426,6 +426,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/auth/callback":
             code = (q.get("code") or [""])[0]
             state = (q.get("state") or [""])[0]
+            print("[auth-callback] state=%s code=%s" % (state[:20] if state else "none", "yes" if code else "no"), flush=True)
             is_rtw = state.startswith("rtw_")
             is_direct = state.startswith("direct_")
             if is_direct:
@@ -483,6 +484,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self.end_headers()
                 return
             result = standalone_auth.exchange_code(code) if (STANDALONE and code) else None
+            print("[auth-callback] exchange result=%s" % ("ok:"+result["login"] if result else "FAILED"), flush=True)
             self.send_response(302)
             if result:
                 login, display_name = result["login"], result["name"]
