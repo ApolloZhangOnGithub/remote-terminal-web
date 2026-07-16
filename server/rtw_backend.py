@@ -45,7 +45,9 @@ BLOG_LOGIN_URL = "https://platform.c-n-b.space/docs/auth/github?redirect=https:/
 
 
 def login_url():
-    return "/auth/github" if STANDALONE else BLOG_LOGIN_URL
+    if STANDALONE or BLOG_GITHUB_ID:
+        return "/auth/github"
+    return BLOG_LOGIN_URL
 
 
 def _load(path, default):
@@ -115,26 +117,22 @@ def _session_alive(rec, now):
 
 
 def valid_user(handler):
-    if STANDALONE:
-        c = SimpleCookie(handler.headers.get("Cookie", ""))
-        sc = c.get("rtw_sess")
-        if not sc:
-            return None
+    c = SimpleCookie(handler.headers.get("Cookie", ""))
+    sc = c.get("rtw_sess")
+    if sc:
         rec = _load(RTW_SESSIONS, {}).get(sc.value)
-        if not rec or not _session_alive(rec, int(time.time())):
-            return None
-        return (rec["user"], rec.get("name", rec["user"]))
-    row = cookie_user(handler)
-    if not row:
-        return None
-    sess = get_rtw_sess(handler)
-    if not sess:
-        return None
-    su = (sess.get("user") or "").lower()
-    ru = (row[0] or "").lower()
-    if su != ru and su != ru.rstrip("0123456789"):
-        return None
-    return row
+        if rec and _session_alive(rec, int(time.time())):
+            return (rec["user"], rec.get("name", rec["user"]))
+    if not STANDALONE:
+        row = cookie_user(handler)
+        if row:
+            sess = get_rtw_sess(handler)
+            if sess:
+                su = (sess.get("user") or "").lower()
+                ru = (row[0] or "").lower()
+                if su == ru or su == ru.rstrip("0123456789"):
+                    return row
+    return None
 
 
 def port_alive(port):
@@ -407,18 +405,54 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if path == "/api/config":
             return self._json(200, {"login_url": login_url(), "version": "0.1.0"})
 
-        if STANDALONE and path == "/auth/github":
-            state = secrets.token_urlsafe(12)
-            self.send_response(302)
-            self.send_header("Set-Cookie", "oauth_state=%s; Path=/; Max-Age=600; HttpOnly; SameSite=Lax" % state)
-            self.send_header("Location", standalone_auth.authorize_url(state))
-            self.end_headers()
-            return
+        if path == "/auth/github":
+            if STANDALONE:
+                state = secrets.token_urlsafe(12)
+                self.send_response(302)
+                self.send_header("Set-Cookie", "oauth_state=%s; Path=/; Max-Age=600; HttpOnly; SameSite=Lax" % state)
+                self.send_header("Location", standalone_auth.authorize_url(state))
+                self.end_headers()
+                return
+            if BLOG_GITHUB_ID:
+                state = "direct_" + secrets.token_urlsafe(12)
+                cb = "https://%s/auth/callback" % SERVER_HOST
+                url = "https://github.com/login/oauth/authorize?client_id=%s&redirect_uri=%s&scope=read:user&state=%s" % (
+                    BLOG_GITHUB_ID, cb, state)
+                self.send_response(302)
+                self.send_header("Location", url)
+                self.end_headers()
+                return
 
         if path == "/auth/callback":
             code = (q.get("code") or [""])[0]
             state = (q.get("state") or [""])[0]
             is_rtw = state.startswith("rtw_")
+            is_direct = state.startswith("direct_")
+            if is_direct:
+                result = _blog_exchange_code(code) if code else None
+                self.send_response(302)
+                if result:
+                    login, display_name = result["login"], result["name"]
+                    now = int(time.time())
+                    sess = {k: v for k, v in _load(RTW_SESSIONS, {}).items() if v.get("expires", 0) > now}
+                    ua = self.headers.get("User-Agent", "")
+                    sid = None
+                    for k, v in sess.items():
+                        if v.get("user") == login:
+                            sid = k
+                            v["expires"] = now + LOGIN_TTL
+                            v["name"] = display_name
+                            if not v.get("ua") and ua:
+                                v["ua"] = ua[:120]
+                            break
+                    if not sid:
+                        sid = secrets.token_urlsafe(24)
+                        sess[sid] = {"user": login, "name": display_name, "expires": now + LOGIN_TTL, "login": now, "ua": ua[:120]}
+                    _save(RTW_SESSIONS, sess)
+                    self.send_header("Set-Cookie", "rtw_sess=%s; Path=/; Domain=.%s; Secure; HttpOnly; SameSite=Lax; Max-Age=%d" % (sid, SERVER_HOST, LOGIN_TTL))
+                self.send_header("Location", "https://%s/terminal/authok.html" % SERVER_HOST)
+                self.end_headers()
+                return
             if not is_rtw:
                 blog_result = _blog_exchange_code(code) if code else None
                 if not blog_result:
