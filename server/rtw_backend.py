@@ -370,7 +370,10 @@ EOF
   say "Linux:已用 systemd --user 启动"
 fi
 
-say "完成。回到网页运行 ls 就能看到这台设备(名称:新设备,可用 rn 改名)。"
+# 5) 上报主机名
+HNAME="$(hostname -s 2>/dev/null || hostname 2>/dev/null || echo '新设备')"
+curl -fsSk "https://%(server)s/terminal/api/device-rename-internal?m=%(did)s&name=$HNAME&key=%(did)s" >/dev/null 2>&1 || true
+say "完成。设备名:$HNAME (可在网页用 rn 改名)"
 ''' % {"did": did, "port": port, "server": server_host, "privkey": privkey.strip()}
 
 
@@ -387,6 +390,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
         u = urlparse(self.path)
         path = u.path
         q = parse_qs(u.query)
+
+        if path == "/api/device-rename-internal":
+            mid = (q.get("m") or [""])[0]
+            name = (q.get("name") or [""])[0].strip()[:40]
+            key = (q.get("key") or [""])[0]
+            if mid and name and key == mid:
+                machines = _load(MACHINES, {})
+                m = machines.get(mid)
+                if m and m.get("name") == "新设备":
+                    m["name"] = name
+                    _save(MACHINES, machines)
+                    return self._json(200, {"ok": True})
+            return self._json(200, {"ok": False})
 
         if path == "/api/config":
             return self._json(200, {"login_url": login_url(), "version": "0.1.0"})
@@ -825,6 +841,58 @@ class Handler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(script.encode())
             return
+
+        if path == "/api/provision":
+            row = valid_user(self)
+            if row is None:
+                return self._json(401, {"error": "not_logged_in"})
+            name = (q.get("name") or [""])[0].strip()[:40]
+            owner = row[0]
+            import tempfile
+            td = tempfile.mkdtemp()
+            kp = os.path.join(td, "key")
+            subprocess.run(["ssh-keygen", "-t", "ed25519", "-N", "", "-f", kp, "-C", "rtw-pre"], stdout=subprocess.PIPE, stderr=subprocess.PIPE, timeout=10)
+            with open(kp) as f:
+                privkey = f.read()
+            with open(kp + ".pub") as f:
+                pubkey = f.read().strip()
+            os.unlink(kp); os.unlink(kp + ".pub"); os.rmdir(td)
+            clean_pk = sanitize_pubkey(pubkey)
+            if not clean_pk:
+                return self._json(500, {"error": "keygen_failed"})
+            machines = _load(MACHINES, {})
+            used = {m.get("port") for m in machines.values() if m.get("port")}
+            port = 7700
+            while port in used:
+                port += 1
+            did = "d-" + secrets.token_hex(4)
+            machines[did] = {"owners": [owner], "port": port, "name": name or "新设备", "online": False, "pubkey": clean_pk}
+            _save(MACHINES, machines)
+            with open(AUTHKEYS, "a") as f:
+                f.write('no-pty,no-agent-forwarding,no-X11-forwarding,permitlisten="127.0.0.1:%d" %s rtw-%s\n' % (port, clean_pk, did))
+            with open(PORTS_MAP, "a") as f:
+                f.write("%s %d;\n" % (did, port))
+            try:
+                subprocess.run(["nginx", "-s", "reload"], timeout=10, check=False)
+            except Exception:
+                pass
+            return self._json(200, {
+                "device_id": did,
+                "tunnel_port": port,
+                "tunnel_user": "rtwtun",
+                "tunnel_host": SERVER_HOST,
+                "private_key": privkey.strip(),
+                "local_ttyd_port": LOCAL_TTYD_PORT,
+                "setup": [
+                    "1. Save private_key to ~/.rtw/tunnel_key (chmod 600)",
+                    "2. Install ttyd and tmux if not present",
+                    "3. Start ttyd: ttyd -W -a -i 127.0.0.1 -p %d ~/.rtw/web-term" % LOCAL_TTYD_PORT,
+                    "4. Create ~/.rtw/web-term: #!/bin/bash\\nS=\"${1:-main}\"; S=$(printf '%%s' \"$S\" | tr -cd 'a-zA-Z0-9_-' | cut -c1-32); [ -z \"$S\" ] && S=main; exec tmux new-session -A -s \"$S\"",
+                    "5. Start reverse tunnel: ssh -N -R 127.0.0.1:%d:localhost:%d -i ~/.rtw/tunnel_key -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -o ExitOnForwardFailure=yes rtwtun@%s" % (port, LOCAL_TTYD_PORT, SERVER_HOST),
+                    "6. Set up as persistent services (launchd on macOS, systemd on Linux)",
+                ],
+                "rename_url": "/terminal/api/device-rename-internal?m=%s&name=<hostname>&key=%s" % (did, did),
+            })
 
         if path == "/api/login-start":
             # GitHub OAuth 回跳到这里:有博客身份就签发平台登录会话,再回主页

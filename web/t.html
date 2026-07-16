@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>终端</title>
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='15' fill='%23111'/%3E%3Ctext x='12' y='68' font-family='monospace' font-size='55' fill='%2300ff88'%3E%3E_%3C/text%3E%3C/svg%3E">
+<link rel="icon" type="image/svg+xml" href="/terminal/favicon.svg">
 <link rel="stylesheet" href="/terminal/xterm.css">
 <script src="/terminal/xterm.js"></script>
 <script src="/terminal/xterm-fit.js"></script>
@@ -50,11 +50,30 @@
   </div>
 </div>
 <script>
+const THEMES = {
+  dark:  { background:'#0d1117', foreground:'#e6edf3', cursor:'#ff8a65', selectionBackground:'#264f78' },
+  light: { background:'#ffffff', foreground:'#24292f', cursor:'#cf222e', selectionBackground:'#0969da33' },
+};
+function resolveTheme(){
+  const pref = localStorage.getItem('rtw-theme') || 'sys';
+  if(pref==='sys') return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  return THEMES[pref] ? pref : 'dark';
+}
+function applyTheme(name){
+  const t = THEMES[name] || THEMES.dark;
+  document.body.style.background = t.background;
+  document.getElementById('sel-overlay').style.background = t.background;
+  document.getElementById('sel-overlay').style.color = t.foreground;
+  if(typeof term !== 'undefined') term.options.theme = t;
+}
+const _initTheme = resolveTheme();
+
 const qs = new URLSearchParams(location.search);
 const dev = qs.get("m"), sid = qs.get("s");
 const term = new Terminal({ cursorBlink:true, fontSize:14, scrollback:5000,
+  allowProposedApi:true,
   fontFamily:'Menlo,Monaco,Consolas,"DejaVu Sans Mono",monospace',
-  theme:{ background:'#0d1117', foreground:'#e6edf3', cursor:'#ff8a65' } });
+  theme: THEMES[_initTheme] });
 const fit = new FitAddon.FitAddon();
 term.loadAddon(fit);
 const unicode11 = new Unicode11Addon.Unicode11Addon();
@@ -65,20 +84,38 @@ term.open(document.getElementById('term'));
 let ws, ctrlOn=false, altOn=false;
 const enc = new TextEncoder();
 function refit(){ try{ fit.fit(); sendResize(); }catch(e){} }
+refit();
 addEventListener('resize', refit);
 
+let reconDelay=0, reconTimer=null, gotOutput=false;
 function connect(){
+  if(!gotOutput) term.write("\r\n\x1b[38;5;245m connecting session "+(sid||dev)+" ...\x1b[0m");
   const proto = location.protocol==="https:" ? "wss" : "ws";
   const url = proto+"://"+location.host+"/m/"+encodeURIComponent(dev)+"/ws"+(sid?("?arg="+encodeURIComponent(sid)):"");
   ws = new WebSocket(url, ["tty"]);
   ws.binaryType = "arraybuffer";
-  ws.onopen = ()=>{ ws.send(enc.encode(JSON.stringify({AuthToken:"",columns:term.cols,rows:term.rows}))); setTimeout(refit,60); };
+  ws.onopen = ()=>{
+    reconDelay=0;
+    ws.send(enc.encode(JSON.stringify({AuthToken:"",columns:term.cols,rows:term.rows})));
+    setTimeout(refit,60);
+    if(!gotOutput) term.write("\r\n\x1b[38;5;245m connected, waiting for shell ...\x1b[0m");
+  };
   ws.onmessage = (e)=>{
     const data = (typeof e.data==="string") ? e.data : new TextDecoder().decode(e.data);
-    if(data[0]==="0") term.write(data.slice(1));   // OUTPUT,其余指令(标题/偏好)忽略
+    if(data[0]==="0"){
+      if(!gotOutput){ term.reset(); refit(); gotOutput=true; }
+      term.write(data.slice(1));
+    }
   };
-  ws.onerror = ()=>{ term.write("\r\n\x1b[31m[连接失败,可能未登录或设备离线,刷新重试]\x1b[0m\r\n"); };
-  ws.onclose = ()=>{ term.write("\r\n\x1b[38;5;245m[连接已断开,刷新页面重连]\x1b[0m\r\n"); };
+  ws.onerror = ()=>{
+    if(!gotOutput) term.write("\r\n\x1b[31m connection failed (not logged in or device offline)\x1b[0m\r\n");
+  };
+  ws.onclose = ()=>{
+    if(gotOutput) term.write("\r\n\x1b[38;5;245m[disconnected, reconnecting ...]\x1b[0m\r\n");
+    else term.write("\r\n\x1b[38;5;245m reconnecting ...\x1b[0m");
+    reconDelay = Math.min((reconDelay||1)*2, 16);
+    reconTimer = setTimeout(connect, reconDelay*1000);
+  };
 }
 // 按 ttyd 协议用二进制帧发送
 function sendInput(d){ if(ws&&ws.readyState===1) ws.send(enc.encode("0"+d)); }
@@ -240,6 +277,11 @@ function stopMic(){
   }, {passive:false});
   document.addEventListener('touchend', ()=>{ active=false; }, {passive:true});
 })();
+
+applyTheme(_initTheme);
+window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', ()=>{
+  if((localStorage.getItem('rtw-theme') || 'sys') === 'sys') applyTheme(resolveTheme());
+});
 
 connect();
 term.focus();

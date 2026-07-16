@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Crect width='100' height='100' rx='15' fill='%23111'/%3E%3Ctext x='12' y='68' font-family='monospace' font-size='55' fill='%2300ff88'%3E%3E_%3C/text%3E%3C/svg%3E">
+<link rel="icon" type="image/svg+xml" href="/terminal/favicon.svg">
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Remote Terminal Web</title>
@@ -9,7 +9,7 @@
 <script src="/terminal/xterm.js"></script>
 <script src="/terminal/xterm-fit.js"></script>
 <style>
-  html,body{margin:0;height:100%;background:#0d1117}
+  html,body{margin:0;height:100%;background:#0d1117;transition:background .2s}
   #term{position:absolute;inset:0;padding:14px}
   .xterm{height:100%}
 </style>
@@ -19,10 +19,29 @@
 <script>
 let OAUTH = "https://platform.c-n-b.space/docs/auth/github?redirect=" +
             encodeURIComponent("https://c-n-b.space/terminal/api/login-start");
+
+const THEMES = {
+  dark:  { background:'#0d1117', foreground:'#e6edf3', cursor:'#ff8a65', selectionBackground:'#264f78' },
+  light: { background:'#ffffff', foreground:'#24292f', cursor:'#cf222e', selectionBackground:'#0969da33' },
+};
+function resolveTheme(){
+  const pref = localStorage.getItem('rtw-theme') || 'sys';
+  if(pref==='sys'){
+    return window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+  }
+  return THEMES[pref] ? pref : 'dark';
+}
+function applyTheme(name){
+  const t = THEMES[name] || THEMES.dark;
+  document.body.style.background = t.background;
+  if(typeof term !== 'undefined') term.options.theme = t;
+}
+const _initTheme = resolveTheme();
+
 const term = new Terminal({
   cursorBlink:true, fontSize:15,
   fontFamily:'Menlo,Monaco,Consolas,"DejaVu Sans Mono",monospace',
-  theme:{ background:'#0d1117', foreground:'#e6edf3', cursor:'#ff8a65' }
+  theme: THEMES[_initTheme]
 });
 const fit = new FitAddon.FitAddon();
 term.loadAddon(fit);
@@ -75,6 +94,7 @@ const REGISTRY = [
   ["logout",    "退出登录"],
   ["agent",     "管理 agent token(agent new/revoke/ls)"],
   ["whoami",    "当前用户"],
+  ["theme",     "theme [dark|light|sys] 切换主题"],
   ["help",      "命令列表"],
   ["clear",     "清屏"],
 ];
@@ -165,13 +185,21 @@ async function doCdSession(arg){
 // ── register: 设备注册 ──
 async function doRegister(arg){
   if(arg.indexOf("--here")===0) return await doRegisterHere(arg.slice(6).trim());
-  const r = await api("register-token");
+  const name = arg.trim();
+  const r = await api("provision"+(name?"?name="+encodeURIComponent(name):""));
   if(!r.ok){ w(" "+C.d+"获取失败"+C.r+"\n"); return; }
-  const dlUrl = "/terminal/api/init-script?token="+encodeURIComponent(r.data.token);
-  const a = document.createElement("a"); a.href = dlUrl; a.download = "rtw-init.sh"; document.body.appendChild(a); a.click(); a.remove();
-  w("\n "+C.g+"已下载 rtw-init.sh"+C.r+C.d+"(30 分钟内有效),在新机器终端里跑:"+C.r+"\n");
-  w("   "+C.c+"bash ~/Downloads/rtw-init.sh"+C.r+"\n\n");
-  w(C.d+"   完成后运行 "+C.o+"ls"+C.r+C.d+" 刷新设备列表\n"+C.r);
+  const d = r.data;
+  w("\n "+C.g+"设备已注册: "+C.b+d.device_id+C.r+C.d+" (端口 "+d.tunnel_port+")"+C.r+"\n\n");
+  w(C.b+" Agent 接入指令"+C.r+C.d+" (在目标机的 Claude Code / agent 里执行):"+C.r+"\n\n");
+  w(C.c+"   1. "+C.r+"写入隧道密钥:\n");
+  w(C.d+"      mkdir -p ~/.rtw && cat > ~/.rtw/tunnel_key << 'EOF'\n      "+d.private_key.split("\\n")[0]+"...\n      EOF\n      chmod 600 ~/.rtw/tunnel_key"+C.r+"\n\n");
+  w(C.c+"   2. "+C.r+"安装依赖: "+C.d+"brew install ttyd tmux"+C.r+" (macOS) / "+C.d+"apt install tmux"+C.r+" (Linux)\n\n");
+  w(C.c+"   3. "+C.r+"启动 ttyd + 反向隧道 (写成常驻服务)\n\n");
+  w(C.d+" 完整凭据 (JSON):"+C.r+"\n");
+  w(C.c+"   "+JSON.stringify({device_id:d.device_id, tunnel_port:d.tunnel_port, tunnel_user:d.tunnel_user, tunnel_host:d.tunnel_host, local_ttyd_port:d.local_ttyd_port})+C.r+"\n\n");
+  w(C.d+" 私钥已生成,只显示这一次。用 "+C.o+"ls"+C.r+C.d+" 查看设备状态。"+C.r+"\n");
+  // 复制完整 JSON 到剪贴板
+  try{ await navigator.clipboard.writeText(JSON.stringify(d, null, 2)); w(C.g+" (完整凭据已复制到剪贴板)"+C.r+"\n"); }catch(e){}
 }
 async function doRegisterHere(arg){
   if(!arg){ w(" "+C.d+"用法: register --here <设备序号>"+C.r+"\n"); return; }
@@ -378,6 +406,26 @@ function doLogout(){
   w(" "+C.g+"已退出"+C.r+"\n"); prompt();
 }
 
+// ── theme ──
+function doTheme(arg){
+  const a = arg.trim().toLowerCase();
+  if(!a){
+    const cur = localStorage.getItem('rtw-theme') || 'sys';
+    const resolved = resolveTheme();
+    w("\n "+C.d+"当前: "+C.b+cur+C.r+(cur==='sys'?C.d+" ("+resolved+")"+C.r:"")+"\n");
+    w(" "+C.d+"可选: "+C.o+"dark"+C.r+C.d+" | "+C.o+"light"+C.r+C.d+" | "+C.o+"sys"+C.r+C.d+" (跟随系统)"+C.r+"\n");
+    return;
+  }
+  if(a!=='dark' && a!=='light' && a!=='sys'){ w(" "+C.d+"用法: theme [dark|light|sys]"+C.r+"\n"); return; }
+  localStorage.setItem('rtw-theme', a);
+  applyTheme(resolveTheme());
+  w(" "+C.g+"已切换: "+C.b+a+C.r+"\n");
+}
+applyTheme(_initTheme);
+window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', ()=>{
+  if((localStorage.getItem('rtw-theme') || 'sys') === 'sys') applyTheme(resolveTheme());
+});
+
 // ── boot & clear ──
 async function boot(){
   w("\n"+BANNER+"\n");
@@ -406,6 +454,7 @@ async function run(cmdline){
     if(me){ w(C.d+" "+C.o+"cd "+C.c+"<序号>"+C.r+C.d+" 进入设备   "+C.o+"register"+C.r+C.d+" 接入新机器   "+C.o+"msg"+C.r+C.d+" 消息   "+C.o+"help"+C.r+C.d+" 更多"+C.r+"\n"); await doLsDevices(); }
     prompt(); return; }
   if(cmd==="help"){ help(); prompt(); return; }
+  if(cmd==="theme"){ doTheme(arg); prompt(); return; }
 
   if(!me){
     if(cmd==="login"){ gotoLogin(); return; }
