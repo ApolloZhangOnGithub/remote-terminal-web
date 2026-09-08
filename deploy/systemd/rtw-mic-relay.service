@@ -1,0 +1,14 @@
+# rtw-mic-relay.service — 浏览器语音 → agent 耳朵 (mic relay)
+[Unit]
+Description=RTW mic relay (browser audio to agent ear)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/cnb-terminal
+ExecStart=/usr/bin/node /opt/cnb-terminal/mic_relay.js
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

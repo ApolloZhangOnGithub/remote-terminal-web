@@ -27,6 +27,16 @@ import urllib.request
 CLIENT_ID = os.environ.get("RTW_GITHUB_CLIENT_ID", "")
 CLIENT_SECRET = os.environ.get("RTW_GITHUB_CLIENT_SECRET", "")
 SECRET = os.environ.get("RTW_SECRET", "change-me-please").encode()
+
+def _require_secret():
+    """2026-09-07（安全）: 拒绝默认密钥——签名/校验会话 cookie 前强制 RTW_SECRET 已设置。
+    lazy 校验: 只在真正用到 SECRET 时触发（非 standalone 模式不调用 make_cookie/verify_cookie 不受影响）。"""
+    if SECRET == b"change-me-please":
+        raise RuntimeError(
+            "RTW_SECRET 未设置——拒绝使用默认密钥签名会话（高危, cookie 可伪造）。"
+            "生成: openssl rand -hex 32；启动前 export RTW_SECRET=<value>"
+        )
+
 HOST = os.environ.get("RTW_SERVER_HOST", "localhost")
 SESSION_TTL = 365 * 86400
 
@@ -78,12 +88,14 @@ def exchange_code(code):
 
 
 def make_cookie(username):
+    _require_secret()
     payload = ("%s|%d" % (username, int(time.time()) + SESSION_TTL)).encode()
     sig = hmac.new(SECRET, payload, hashlib.sha256).hexdigest()[:32]
     return base64.urlsafe_b64encode(payload).decode().rstrip("=") + "." + sig
 
 
 def verify_cookie(value):
+    _require_secret()
     """校验 rtw_login cookie,返回用户名或 None。"""
     try:
         b64, sig = value.split(".", 1)

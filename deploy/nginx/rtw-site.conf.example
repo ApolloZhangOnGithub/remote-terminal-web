@@ -1,0 +1,85 @@
+# rtw-site.conf.example — rtw 服务器端 nginx 路由模板
+# 放到 conf.d/ 并替换 <YOUR_SITE> / <YOUR_BACKEND_PORT> 等占位
+# 前提: 站点登录体系(供 /check 校验) + rtw_backend 跑在 8092
+
+# ── 设备端口 map ─────────────────────────────
+# /etc/nginx/rtw-ports.map:
+#   map $mdev $mport { default 0; d-server01 7682; }
+
+server {
+    listen 80;
+    server_name <YOUR_SITE>;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    http2 on;
+    server_name <YOUR_SITE>;
+
+    # 站点主站 root (可选, 用于登录/首页体系)
+    root /opt/cnb-site;
+
+    # ── rtw 后端 API ─────────────────────────
+    location /auth/ {
+        proxy_pass http://127.0.0.1:8092/auth/;
+        proxy_set_header Cookie $http_cookie;
+    }
+    location /terminal/api/ {
+        proxy_pass http://127.0.0.1:8092/api/;
+        proxy_set_header Cookie $http_cookie;
+    }
+
+    # ── 前端静态页 ──────────────────────────
+    location = /terminal { return 301 /terminal/; }
+    location /terminal/ {
+        add_header Cache-Control "no-cache, must-revalidate";
+        alias /opt/cnb-terminal/;
+        index index.html;
+        try_files $uri $uri/ /opt/cnb-terminal/index.html;
+    }
+
+    # ── 认证闸门(所有 /m/ /mic/ 先过) ────────
+    location = /__authcheck {
+        internal;
+        proxy_pass http://127.0.0.1:8092/check;
+        proxy_pass_request_body off;
+        proxy_set_header Content-Length "";
+        proxy_set_header X-Original-URI $request_uri;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+    location @gh_login { return 302 https://<YOUR_SITE>/terminal/; }
+
+    # ── 设备终端 /m/<dev>/<rest> ─────────────
+    location ~ ^/m/(?<mdev>[a-z0-9-]+)/(?<rest>.*)$ {
+        auth_request /__authcheck;
+        error_page 401 = @gh_login;
+        proxy_pass http://127.0.0.1:$mport/$rest$is_args$args;
+        proxy_buffering off;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+    }
+
+    # ── 语音中继 /mic/<dev> ──────────────────
+    location ~ ^/mic/(?<mdev>[a-z0-9-]+)$ {
+        auth_request /__authcheck;
+        error_page 401 = @gh_login;
+        proxy_pass http://127.0.0.1:7690;
+        proxy_buffering off;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_read_timeout 86400s;
+        proxy_send_timeout 86400s;
+    }
+
+    # ── 会话跳转(旧路径兼容) ─────────────────
+    location = /t { return 301 /t/; }
+    location = /t/new { return 302 https://<YOUR_SITE>/terminal/; }
+    location /t/ { return 302 https://<YOUR_SITE>/terminal/; }
+}

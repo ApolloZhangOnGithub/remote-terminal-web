@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WebTerm · 浏览器里的远程终端</title>
+<style>
+  :root{
+    --bg:#0d1117; --panel:#161b22; --border:#26303c; --fg:#e6edf3;
+    --muted:#8b949e; --accent:#ff8a65; --accent2:#7ee787; --code:#1c2128;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--fg);font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif;line-height:1.6;-webkit-font-smoothing:antialiased}
+  code,pre,.mono{font-family:"SF Mono",Menlo,Consolas,"DejaVu Sans Mono",monospace}
+  .wrap{max-width:860px;margin:0 auto;padding:0 20px}
+  /* hero */
+  header{padding:64px 0 40px;text-align:center;border-bottom:1px solid var(--border)}
+  .logo{display:inline-flex;align-items:center;gap:10px;font-size:15px;color:var(--muted);margin-bottom:22px}
+  .dot{width:9px;height:9px;border-radius:50%;background:var(--accent2);box-shadow:0 0 8px var(--accent2)}
+  h1{font-size:40px;line-height:1.2;letter-spacing:-.5px;margin-bottom:14px}
+  h1 .hl{color:var(--accent)}
+  .sub{font-size:18px;color:var(--muted);max-width:620px;margin:0 auto 30px}
+  .cta{display:inline-flex;align-items:center;gap:10px;background:var(--accent);color:#1a1208;font-weight:600;font-size:16px;padding:13px 26px;border-radius:10px;text-decoration:none;transition:.15s}
+  .cta:hover{transform:translateY(-1px);filter:brightness(1.05)}
+  .cta.ghost{background:transparent;color:var(--fg);border:1px solid var(--border);margin-left:12px}
+  .ghsvg{width:20px;height:20px;fill:currentColor}
+  /* sections */
+  section{padding:48px 0;border-bottom:1px solid var(--border)}
+  h2{font-size:22px;margin-bottom:20px;display:flex;align-items:center;gap:10px}
+  h2 .n{color:var(--accent);font-family:monospace;font-size:18px}
+  .flow{background:var(--code);border:1px solid var(--border);border-radius:12px;padding:22px;overflow-x:auto}
+  .flow pre{color:var(--muted);font-size:13px;line-height:1.7;white-space:pre}
+  .flow b{color:var(--accent2)}
+  .steps{display:grid;gap:14px}
+  .step{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:18px 20px}
+  .step .head{display:flex;align-items:center;gap:10px;margin-bottom:8px}
+  .badge{font-size:12px;font-weight:600;padding:2px 9px;border-radius:20px}
+  .b-once{background:rgba(255,138,101,.15);color:var(--accent)}
+  .b-auto{background:rgba(126,231,135,.15);color:var(--accent2)}
+  .step h3{font-size:16px}
+  .step p{color:var(--muted);font-size:14.5px;margin-top:2px}
+  .step pre{background:var(--code);border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-top:10px;font-size:13px;color:var(--fg);overflow-x:auto}
+  .why{font-size:13px;color:var(--muted);border-left:2px solid var(--border);padding-left:12px;margin-top:10px}
+  footer{padding:36px 0 60px;text-align:center;color:var(--muted);font-size:13px}
+  .feat{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px}
+  .feat .c{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:16px}
+  .feat .c .t{font-weight:600;margin-bottom:4px}
+  .feat .c .d{font-size:13.5px;color:var(--muted)}
+  @media(max-width:600px){h1{font-size:30px}.sub{font-size:16px}.cta.ghost{margin-left:0;margin-top:10px}}
+</style>
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="logo"><span class="dot"></span> WebTerm · 自托管网页终端平台</div>
+    <h1>用浏览器，进入<span class="hl">你任何一台机器</span>的终端</h1>
+    <p class="sub">GitHub 登录，选一台你绑定的机器，立刻进入它的终端。无需 App、无需 VPN、目标机不开任何入站端口。会话常驻，断线重连不丢。</p>
+    <a class="cta" href="https://platform.c-n-b.space/docs/auth/github?redirect=https://c-n-b.space/t/">
+      <svg class="ghsvg" viewBox="0 0 16 16"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+      用 GitHub 登录
+    </a>
+    <a class="cta ghost" href="#start">查看如何接入</a>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2><span class="n">~</span> 它怎么跑起来的</h2>
+    <div class="flow"><pre>  你的手机 / 任意浏览器
+        │  https + wss（加密，可穿透代理）
+        ▼
+    <b>中转服务器</b>（你的云服务器，公网）
+        │  SSH 反向隧道（你的机器主动拨出，<b>不开入站端口</b>）
+        ▼
+    <b>你的机器</b>  ttyd 网页终端 → tmux 常驻会话 → Claude Code / 你的程序</pre></div>
+    <div class="feat" style="margin-top:18px">
+      <div class="c"><div class="t">零客户端</div><div class="d">任意浏览器一个网址，不装 App、不开 VPN。</div></div>
+      <div class="c"><div class="t">会话常驻</div><div class="d">tmux 保活，断网锁屏换设备，程序原地继续。</div></div>
+      <div class="c"><div class="t">终端多开</div><div class="d">多个标签 = 多个互不干扰的独立终端。</div></div>
+      <div class="c"><div class="t">身份隔离</div><div class="d">GitHub 登录，只能进入你自己绑定的机器。</div></div>
+    </div>
+  </div>
+</section>
+
+<section id="start">
+  <div class="wrap">
+    <h2><span class="n">$</span> 接入你的机器（一次性初始化）</h2>
+    <div class="steps">
+
+      <div class="step">
+        <div class="head"><span class="badge b-auto">⚡ 脚本自动</span><h3>1 · 本地安装并注册</h3></div>
+        <p>在要接入的机器上跑一行，自动装好 ttyd/tmux、向中转服务器注册本机、分配唯一机器 ID、配好开机自启的隧道与终端。</p>
+        <pre>curl -fsSL https://c-n-b.space/terminal/init.sh | bash</pre>
+      </div>
+
+      <div class="step">
+        <div class="head"><span class="badge b-once">🔒 一次性</span><h3>2 · 授予完全磁盘访问（仅 macOS）</h3></div>
+        <p>macOS 隐私保护(TCC)会拦截访问 下载/文稿/桌面，远程时你点不到“允许”会卡死。授权一次，永不再弹。脚本会自动跳转到设置页。</p>
+        <p class="why">系统设置 → 隐私与安全性 → 完全磁盘访问权限 → ＋ → 加入 ttyd → 打开开关。</p>
+      </div>
+
+      <div class="step">
+        <div class="head"><span class="badge b-once">🔒 一次性</span><h3>3 · 代理加直连规则（若开了 Shadowrocket/Clash）</h3></div>
+        <p>全局代理会把隧道流量绕到海外节点，导致严重卡顿。给中转服务器加一条直连规则，延迟立刻降到本地 SSH 同级。<b>机器端和看终端的设备都要加。</b></p>
+        <pre>IP-CIDR, &lt;中转服务器IP&gt;/32, DIRECT</pre>
+      </div>
+
+      <div class="step">
+        <div class="head"><span class="badge b-once">🔒 一次性</span><h3>4 · 关闭休眠（让机器长期可达）</h3></div>
+        <p>笔记本插电、保持不合盖；macOS 一条命令永久禁用插电休眠。</p>
+        <pre>sudo pmset -c sleep 0</pre>
+      </div>
+
+      <div class="step">
+        <div class="head"><span class="badge b-once">🔒 首次</span><h3>5 · GitHub 登录 → 选机器 → 进终端</h3></div>
+        <p>回到本页点“用 GitHub 登录”，授权后看到你绑定的机器列表，点任意一台即进入它的网页终端。建议把本页添加到主屏幕。</p>
+      </div>
+
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    自托管 · 数据只经你自己的服务器 · <a href="#start" style="color:var(--accent)">开始接入</a><br>
+    出问题在机器上跑 <code>remote-doctor</code> 一键体检整条链路。
+  </div>
+</footer>
+</body>
+</html>

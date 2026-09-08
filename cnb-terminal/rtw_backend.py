@@ -415,6 +415,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 return
             if BLOG_GITHUB_ID:
                 state = "direct_" + secrets.token_urlsafe(12)
+                self.send_header("Set-Cookie", "oauth_state=%s; Path=/; Max-Age=600; HttpOnly; SameSite=Lax" % state)
                 cb = "https://%s/auth/callback" % SERVER_HOST
                 url = "https://github.com/login/oauth/authorize?client_id=%s&redirect_uri=%s&scope=read:user&state=%s" % (
                     BLOG_GITHUB_ID, cb, state)
@@ -429,6 +430,24 @@ class Handler(http.server.BaseHTTPRequestHandler):
             print("[auth-callback] state=%s code=%s" % (state[:20] if state else "none", "yes" if code else "no"), flush=True)
             is_rtw = state.startswith("rtw_")
             is_direct = state.startswith("direct_")
+            # 2026-09-07（安全: OAuth CSRF——比对 oauth_state cookie 与回调 state；rtw/direct 我们种了 cookie 必须比对）
+            if is_rtw or is_direct:
+                cookies = self.headers.get("Cookie") or ""
+                oauth_cookie = ""
+                for part in cookies.split(";"):
+                    k, _, v = part.strip().partition("=")
+                    if k == "oauth_state":
+                        oauth_cookie = v
+                        break
+                expected = state[4:] if is_rtw else state  # standalone: state=rtw_<orig>, cookie 存 <orig>
+                if not oauth_cookie or oauth_cookie != expected:
+                    print("[auth-callback] state mismatch (CSRF) cookie=%s state=%s" % (oauth_cookie[:8] or "none", state[:14]), flush=True)
+                    self.send_response(403)
+                    self.send_header("Content-Type", "text/plain")
+                    self.end_headers()
+                    try: self.wfile.write(b"state mismatch")
+                    except Exception: pass
+                    return
             if is_direct:
                 result = _blog_exchange_code(code) if code else None
                 self.send_response(302)

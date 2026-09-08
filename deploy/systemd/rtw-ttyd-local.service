@@ -1,0 +1,14 @@
+# rtw-ttyd-local.service — 服务器自身终端网页服务 (ttyd :7682)
+# 仅绑 127.0.0.1; 公网经 nginx + auth_request
+[Unit]
+Description=RTW ttyd (local server)
+After=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/ttyd -W -a -i 127.0.0.1 -p 7682 -I /opt/cnb-terminal/ttyd-index.html /opt/cnb-terminal/bin/web-term
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

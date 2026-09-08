@@ -1,4 +1,4 @@
-# 运行时数据(各部署自有,不进仓库)
+# 运行时数据(绝不提交)
 machines.json
 sessions.json
 reg_tokens.json
@@ -19,7 +19,3 @@ __pycache__/
 *.key
 *.pem
 config.local.sh
-
-# 已被 rtw_backend.py 取代的旧后端
-server/authcheck.py
-server/platform_backend.py
