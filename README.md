@@ -1,5 +1,5 @@
 # Remote Terminal Web (rtw) / cnb-terminal
-
+<img width="1464" height="911" alt="截屏2026-09-25 02 54 06" src="https://github.com/user-attachments/assets/1fe6da8f-2cd7-4f0e-ba6d-d364992bf0e8" />
 浏览器里的远程终端 —— 让 Agent / AI 编程助手拥有一个随时可用的网页终端入口。
 
 > 你在 c-n-b.space/terminal 打开网页，就能在浏览器里使用跑在远程机器上的终端（含 AI agent 的 TUI 界面），像操作本地终端一样实时流畅。
